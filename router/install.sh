@@ -91,4 +91,4 @@ say "Готово: версия $NEW."
 if [ ! -s "$APP/data/session.json" ]; then
     echo "    Осталось войти в Дневник.ру: на Mac выполните ./dev.sh login (вход сам передастся на роутер)."
 fi
-echo "    Страница: http://$(uci -q get network.lan.ipaddr || echo 192.168.10.1):8765"
+echo "    Страница: http://$(uci -q get network.lan.ipaddr | cut -d/ -f1):8765"
