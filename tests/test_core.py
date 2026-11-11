@@ -179,6 +179,19 @@ class SyncTests(unittest.TestCase):
         self.assertAlmostEqual(os.stat(self.data / "history.json").st_mtime, old, delta=2)   # данные не менялись - не пишем
         self.assertAlmostEqual(os.stat(self.data / "session.json").st_mtime, old, delta=2)   # вход свежий - не пишем
 
+    def test_page_files_are_readable_by_web_server_under_strict_umask(self):
+        import stat
+        old = os.umask(0o077)           # как было на роутере из-за чужого umask
+        try:
+            self.run_sync()
+        finally:
+            os.umask(old)
+        for name in ("data.json", "offline.html"):
+            mode = stat.S_IMODE(os.stat(self.www / name).st_mode)
+            self.assertTrue(mode & 0o004, f"{name}: права {oct(mode)}, веб-сервер его не отдаст")
+        # а вход и история при этом закрыты
+        self.assertEqual(stat.S_IMODE(os.stat(self.data / "session.json").st_mode), 0o600)
+
     def test_rebuild_after_reboot_uses_saved_history(self):
         self.run_sync()
         self.out.unlink()                                   # как после перезагрузки роутера: оперативная память пуста

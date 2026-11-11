@@ -6,10 +6,12 @@ APP=/root/dnevnik
 WWW=/tmp/dnevnik-www
 
 start_service() {
+    umask 022
     mkdir -p "$WWW/cgi-bin"
     cp -f "$APP"/web/* "$WWW"/
     cp -f "$APP/router/refresh.cgi" "$WWW/cgi-bin/refresh"
-    chmod 755 "$WWW/cgi-bin/refresh"
+    chmod 755 "$WWW" "$WWW/cgi-bin" "$WWW/cgi-bin/refresh"
+    chmod 644 "$WWW"/*.* 2>/dev/null   # веб-сервер не отдаёт файлы, закрытые от остальных
     # сразу показываем последние сохранённые данные, потом обновляемся с сайта
     python3 "$APP/sync.py" --rebuild --data "$APP/data" --out "$WWW/data.json" >/dev/null 2>&1
     ( sleep 25; "$APP/router/sync.sh" ) >/dev/null 2>&1 &

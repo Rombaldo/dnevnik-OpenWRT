@@ -195,12 +195,14 @@ def write_public(out_path, payload):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
+    os.chmod(tmp, 0o644)       # это содержимое страницы: веб-сервер должен его отдавать при любом umask
     os.replace(tmp, out_path)
     index = out_path.parent / "index.html"
     if index.exists():
         blob = text.replace("</", "<\\/")
         tmp = out_path.with_name("offline.html.tmp")
         tmp.write_text(index.read_text(encoding="utf-8").replace("/*INLINE_DATA*/null", blob), encoding="utf-8")
+        os.chmod(tmp, 0o644)
         os.replace(tmp, out_path.with_name("offline.html"))
 
 

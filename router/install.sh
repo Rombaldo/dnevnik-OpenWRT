@@ -10,6 +10,7 @@
 # Ваши данные (вход, история, config.json) при установке и обновлении не трогаются.
 # Для проверки без GitHub: SRC_TARBALL=/tmp/архив.tar.gz sh install.sh
 set -e
+umask 022
 
 APP=/root/dnevnik
 WWW=/tmp/dnevnik-www
@@ -50,9 +51,9 @@ if [ -n "$SRC_TARBALL" ]; then
 else
     [ -s "$TOKEN_FILE" ] || die "нет токена GitHub в $TOKEN_FILE (см. README: «Установка на роутер из GitHub»)"
     say "Скачиваю $REPO ($REF) с GitHub…"
-    # токен кладём во временный конфиг, чтобы он не светился в списке процессов
-    umask 077
-    printf 'header = Authorization: Bearer %s\nheader = Accept: application/vnd.github+json\n' "$(cat "$TOKEN_FILE")" > "$TMP/wgetrc"
+    # токен кладём во временный конфиг (доступ только у root), чтобы он не светился в списке процессов;
+    # строгие права действуют только в скобках, на остальные файлы они не влияют
+    ( umask 077; printf 'header = Authorization: Bearer %s\nheader = Accept: application/vnd.github+json\n' "$(cat "$TOKEN_FILE")" > "$TMP/wgetrc" )
     WGETRC="$TMP/wgetrc" wget -q -T 30 -O "$TMP/src.tar.gz" "https://api.github.com/repos/$REPO/tarball/$REF" \
         || die "не скачалось: проверьте токен, имя репозитория ($REPO) и версию ($REF)"
     rm -f "$TMP/wgetrc"
@@ -74,6 +75,7 @@ cp -r "$SRC/web" "$SRC/router" "$APP/"
 cp -f "$SRC/core.py" "$SRC/sync.py" "$SRC/VERSION" "$APP/"
 [ -f "$APP/config.json" ] || cp "$SRC/config.example.json" "$APP/config.json"
 chmod 755 "$APP"/router/*.sh "$APP"/router/*.cgi "$APP"/router/dnevnik.init
+rm -f "$APP/.source"   # старые версии установщика запоминали имя репозитория
 chown -R root:root "$APP"
 
 # 4. Служба и расписание
@@ -85,6 +87,14 @@ grep -q "dnevnik/router/sync.sh" /etc/crontabs/root 2>/dev/null || echo "*/20 6-
 /etc/init.d/cron restart >/dev/null 2>&1 || true
 /etc/init.d/dnevnik restart 2>&1 | grep -v "Not found" || true
 rm -rf "$TMP"
+
+# 5. Проверяю, что страница действительно открывается
+OK=0
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    if wget -q -T 3 -O /dev/null http://127.0.0.1:8765/index.html 2>/dev/null; then OK=1; break; fi
+    sleep 2
+done
+[ "$OK" = "1" ] || die "версия установлена, но страница на порту 8765 не отвечает: смотрите logread | tail"
 
 say "Готово: версия $NEW."
 if [ ! -s "$APP/data/session.json" ]; then
