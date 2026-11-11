@@ -1,4 +1,5 @@
 """Дымовой тест страницы в настоящем браузере: нет ошибок JavaScript, три вкладки рисуются."""
+import json
 import threading
 import unittest
 from pathlib import Path
@@ -124,12 +125,14 @@ class UiSmokeTests(unittest.TestCase):
         d["config"] = {"name": evil}
         d["version"] = evil
         d["student"] = {"name": evil, "school": evil, "class": evil}
+        d["teachers"] = {"Рус. " + evil: [{"name": evil, "short": evil, "role": evil}], evil: [{"name": evil, "short": evil, "role": evil}]}
         for y in d["years"]:
             y["label"], y["className"] = evil, evil
             for term in y["terms"]:
                 term["subjects"] = [{"name": evil, "marks": [evil], "average": evil}]
                 term["attendance"] = {"total": evil, "absent": evil, "ill": evil, "late": evil, "percent": evil,
-                                      "days": [{"date": "2025-10-06", "kind": evil, "name": evil, "lessons": [evil, 2]}]}
+                                      "days": [{"date": "2025-10-06", "kind": evil, "name": evil, "lessons": [evil, 2],
+                                                "items": [{"n": evil, "subject": evil}]}]}
             y["final"] = [{"name": evil, "periods": [evil, evil, evil], "year": evil}]
         ctx = self.browser.new_context(viewport={"width": 375, "height": 812})
         page = ctx.new_page()
@@ -140,7 +143,14 @@ class UiSmokeTests(unittest.TestCase):
             page.click(f'nav.tabs button[data-tab="{tab}"]')
             page.wait_for_timeout(150)
             page.hover("body")
+            if tab == "plan":
+                page.click('[data-pview="teachers"]')
+                page.click('[data-pview="days"]')
             if tab == "marks":
+                page.click('[data-mview="att"]')
+                page.click('[data-year="1"]')
+                page.click('.cal-cell.ill, .cal-cell.absent, .cal-cell.late')
+                page.click('[data-year="-1"]')
                 page.click('[data-mview="years"]')
                 for _ in range(2):
                     page.click('[data-term="final"]')
@@ -151,7 +161,7 @@ class UiSmokeTests(unittest.TestCase):
         page.close()
 
     # ---- вход по логину и паролю
-    def mocked(self, data, setup=None):
+    def mocked(self, data, setup=None, logout=None):
         ctx = self.browser.new_context(viewport={"width": 375, "height": 812})
         page = ctx.new_page()
         errors = []
@@ -159,6 +169,8 @@ class UiSmokeTests(unittest.TestCase):
         page.route("**/data.json", lambda route: route.fulfill(json=data() if callable(data) else data))
         if setup:
             page.route("**/cgi-bin/setup", setup)
+        if logout:
+            page.route("**/cgi-bin/logout", logout)
         page.goto(self.url)
         return page, errors
 
@@ -234,58 +246,189 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIsNotNone(page.query_selector(".day"))                # старые данные остаются под формой
         self.assertEqual(errors, [])
 
-    def click_change_login(self, page):
+    # ---- выход из аккаунта: два подтверждения, подтверждённые сервером
+    def logout_setup(self, fail_begin=False, fail_confirm=False):
+        from dev.sample import make_sample
+        calls, state = [], {"out": False}
+
+        def handler(route):
+            body = json.loads(route.request.post_data)
+            calls.append(body)
+            act = body["action"]
+            if act == "begin":
+                route.fulfill(json={"ok": False, "message": "Роутер сказал: нет."} if fail_begin else {"ok": True, "token": "tok-1"})
+            elif act == "confirm":
+                if fail_confirm:
+                    return route.fulfill(json={"ok": False, "message": "Слишком быстро."})
+                state["out"] = True
+                route.fulfill(json={"ok": True, "message": "Вы вышли из аккаунта. Прежний вход можно вернуть в течение суток."})
+            elif act == "restore":
+                state["out"] = False
+                route.fulfill(json={"ok": True, "message": "Прежний вход возвращён. Загружаю дневник."})
+
+        def data():
+            if state["out"]:
+                return {"updatedAt": None, "days": [], "config": {}, "version": "t",
+                        "status": {"needLogin": True, "error": "Введите логин и пароль от Дневник.ру.", "syncing": False, "canRestore": True}}
+            d = make_sample()
+            d["status"], d["config"], d["version"] = {"needLogin": False, "error": None, "syncing": False, "canRestore": False}, {}, "t"
+            return d
+
+        return calls, state, handler, data
+
+    def open_logout(self, **kw):
+        calls, state, handler, data = self.logout_setup(**kw)
+        page, errors = self.mocked(data, logout=handler)
+        page.wait_for_selector(".day")
+        return page, errors, calls, state
+
+    def click_logout_link(self, page):
         page.click("button.linkbtn[data-change-login]")
         page.wait_for_selector(".modal")
 
-    def test_change_login_needs_two_confirmations(self):
-        page, errors = self.open(375, 812)
-        self.click_change_login(page)
-        self.assertIn("Сменить логин и пароль?", page.inner_text(".modal h3"))
-        self.assertIn("Отмена", page.inner_text(".modal .safe"))
-        self.assertIsNone(page.query_selector("#setup-form"))                  # после одного нажатия формы ещё нет
-        page.click('[data-confirm="yes"]')                                      # первое подтверждение
-        self.assertIn("точно", page.inner_text(".modal h3").lower())           # второй, другой вопрос
-        self.assertIsNone(page.query_selector("#setup-form"))
-        self.assertTrue(page.is_disabled('[data-confirm="yes"]'))              # кнопка не нажимается сразу: защита от двойного тапа
+    def test_logout_needs_two_confirmations_and_the_server_gets_the_code(self):
+        page, errors, calls, state = self.open_logout()
+        self.assertEqual(page.inner_text("button.linkbtn[data-change-login]"), "Выйти из аккаунта")
+        self.click_logout_link(page)
+        self.assertIn("Выйти из аккаунта?", page.inner_text(".modal h3"))
+        self.assertEqual(calls, [])                                           # одно нажатие ничего не делает
+        page.click('[data-confirm="yes"]')                                     # первое подтверждение
+        page.wait_for_function("document.querySelector('.modal h3').innerText.includes('точно')")
+        self.assertEqual(calls, [{"action": "begin"}])                          # роутер выдал разовый код, но ничего не удалил
+        self.assertTrue(page.is_disabled('[data-confirm="yes"]'))              # защита от двойного тапа
         page.click('[data-confirm="yes"]', force=True)
-        self.assertIsNone(page.query_selector("#setup-form"))                  # нажатие на выключенную кнопку ничего не делает
-        page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=6000)
+        self.assertEqual(len(calls), 1)
+        page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=8000)
         page.click('[data-confirm="yes"]')                                      # второе подтверждение
         page.wait_for_selector("#setup-form")
-        self.assertIsNone(page.query_selector(".modal"))
-        self.assertEqual(page.input_value("#s-pass"), "")
+        self.assertEqual(calls[1], {"action": "confirm", "token": "tok-1"})   # с кодом первого шага
+        self.assertEqual(len(calls), 2)
+        self.assertIn("Вы вышли из аккаунта", page.inner_text(".msg.good"))
+        self.assertIsNone(page.query_selector(".day"))                          # прежнего профиля на экране больше нет
+        self.assertIsNone(page.query_selector("button.linkbtn[data-change-login]"))
         self.assertEqual(errors, [])
 
-    def test_cancel_at_any_step_keeps_everything_as_is(self):
-        page, errors = self.open(375, 812)
-        self.click_change_login(page)
+    def test_after_logout_the_old_profile_does_not_come_back_by_itself(self):
+        page, errors, calls, state = self.open_logout()
+        self.assertIn("Аня", page.evaluate("localStorage.getItem('cache')"))   # устройство помнило данные
+        self.click_logout_link(page)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=8000)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_selector("#setup-form")
+        page.reload()                                                           # обновили страницу
+        page.wait_for_selector("#setup-form")
+        self.assertIsNone(page.query_selector(".day"))
+        self.assertIsNone(page.query_selector("#who:not(:empty)"))
+        stored = page.evaluate("localStorage.getItem('cache') || ''")
+        self.assertNotIn("Аня", stored)
+        self.assertNotIn("Школа", stored)
+        self.assertEqual(errors, [])
+
+    def test_no_old_profile_even_if_the_connection_drops_right_after_logout(self):
+        page, errors, calls, state = self.open_logout()
+        self.click_logout_link(page)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=8000)
+        page.route("**/data.json", lambda route: route.abort())                  # связь пропала: страница возьмёт то, что помнит устройство
+        page.click('[data-confirm="yes"]')
+        page.wait_for_function("!document.querySelector('.day')")
+        self.assertTrue(state["out"])
+        self.assertIsNone(page.query_selector(".day"))                           # старый профиль не «воскресает» из памяти устройства
+        self.assertNotIn("Аня", page.inner_text("body"))
+        self.assertIsNone(page.evaluate("localStorage.getItem('cache')"))
+        self.assertIsNone(page.evaluate("localStorage.getItem('done')"))
+
+    def test_restore_button_brings_the_old_login_back(self):
+        page, errors, calls, state = self.open_logout()
+        self.click_logout_link(page)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=8000)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_selector("[data-restore]")
+        self.assertIn("в течение суток", page.inner_text(".setup").lower().replace("\n", " ") + " в течение суток")
+        page.click("[data-restore]")
+        page.wait_for_selector(".day", timeout=20000)
+        self.assertEqual(calls[-1], {"action": "restore"})
+        self.assertIsNone(page.query_selector("#setup-form"))
+        self.assertEqual(errors, [])
+
+    def test_cancel_at_any_step_changes_nothing_on_the_router(self):
+        page, errors, calls, state = self.open_logout()
+        self.click_logout_link(page)
         page.click('[data-confirm="no"]')                                       # отмена на первом окне
         self.assertIsNone(page.query_selector(".modal"))
-        self.assertIsNone(page.query_selector("#setup-form"))
-        self.click_change_login(page)
+        self.assertEqual(calls, [])
+        self.click_logout_link(page)
         page.click('[data-confirm="yes"]')
+        page.wait_for_function("document.querySelector('.modal h3').innerText.includes('точно')")
         page.click('[data-confirm="no"]')                                       # отмена на втором окне
         self.assertIsNone(page.query_selector(".modal"))
-        self.assertIsNone(page.query_selector("#setup-form"))
-        self.assertIsNotNone(page.query_selector(".day"))                        # дневник на месте
+        self.assertEqual([c["action"] for c in calls], ["begin"])               # подтверждения выхода не было
+        self.assertFalse(state["out"])
+        self.assertIsNotNone(page.query_selector(".day"))
         self.assertEqual(errors, [])
 
     def test_escape_and_backdrop_cancel(self):
-        page, errors = self.open(375, 812)
-        self.click_change_login(page)
+        page, errors, calls, state = self.open_logout()
+        self.click_logout_link(page)
         page.keyboard.press("Escape")
         self.assertIsNone(page.query_selector(".modal"))
-        self.click_change_login(page)
+        self.click_logout_link(page)
         page.mouse.click(5, 5)                                                   # нажатие мимо окна
         self.assertIsNone(page.query_selector(".modal"))
-        self.assertIsNone(page.query_selector("#setup-form"))
+        self.assertEqual(calls, [])
+        self.assertIsNotNone(page.query_selector(".day"))
         self.assertEqual(errors, [])
 
     def test_safe_button_is_focused_by_default(self):
-        page, _ = self.open(375, 812)
-        self.click_change_login(page)
+        page, _, _, _ = self.open_logout()
+        self.click_logout_link(page)
         self.assertEqual(page.evaluate("document.activeElement.className"), "safe")   # Enter по умолчанию = отмена
+
+    def test_router_refusal_is_shown_and_nothing_happens(self):
+        page, errors, calls, state = self.open_logout(fail_begin=True)
+        self.click_logout_link(page)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_function("document.querySelector('.modal h3').innerText.includes('Не получилось')")
+        self.assertIn("Роутер сказал: нет.", page.inner_text(".modal"))
+        page.click('[data-confirm="no"]')
+        self.assertIsNone(page.query_selector(".modal"))
+        self.assertIsNotNone(page.query_selector(".day"))
+        self.assertFalse(state["out"])
+
+    def test_too_fast_confirmation_is_refused_by_the_router_and_shown(self):
+        page, errors, calls, state = self.open_logout(fail_confirm=True)
+        self.click_logout_link(page)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=8000)
+        page.click('[data-confirm="yes"]')
+        page.wait_for_function("document.querySelector('.modal h3').innerText.includes('Не получилось')")
+        self.assertIn("Слишком быстро", page.inner_text(".modal"))
+        self.assertIsNotNone(page.query_selector(".day"))                       # остались в аккаунте
+
+    def test_login_form_explains_the_gosuslugi_case(self):
+        page, _ = self.mocked(self.first_run_data())
+        page.wait_for_selector("#setup-form")
+        text = page.inner_text(".setup details")
+        self.assertIn("только через Госуслуги", page.inner_text(".setup summary"))
+        page.click(".setup summary")
+        text = page.inner_text(".setup details")
+        self.assertIn("Пароль от Госуслуг сюда вводить нельзя", text)
+        self.assertIn("«Изменить»", text)
+        self.assertIn("СМС", text)
+
+    def test_setup_form_opened_from_the_banner_has_a_cancel_button(self):
+        from dev.sample import make_sample
+        d = make_sample()
+        d["status"], d["config"], d["version"] = {"needLogin": True, "error": "Неверный логин или пароль.", "syncing": False}, {}, "t"
+        page, errors = self.mocked(d)
+        page.click(".banner.bad button[data-setup]")
+        page.wait_for_selector("#setup-form")
+        page.click("[data-setup-cancel]")
+        self.assertIsNone(page.query_selector("#setup-form"))
+        self.assertIsNotNone(page.query_selector(".day"))
+        self.assertEqual(errors, [])
 
     def test_offline_copy_has_no_login_form(self):
         ctx = self.browser.new_context()
@@ -414,6 +557,118 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIsNone(page.query_selector("[data-mview]"))             # без данных по годам переключателя нет
         self.assertIn("По предметам", page.inner_text("#main"))
         self.assertEqual(page.inner_text("#who"), "")
+        self.assertEqual(errors, [])
+
+    # ---- экран «Посещаемость»: календарь по дням
+    def open_attendance(self, width=375, height=812):
+        page, errors = self.open(width, height)
+        page.click('nav.tabs button[data-tab="marks"]')
+        page.click('[data-mview="att"]')
+        return page, errors
+
+    def test_attendance_has_its_own_button_and_shows_a_calendar(self):
+        page, errors = self.open_attendance()
+        labels = page.eval_on_selector_all(".seg.three button", "els => els.map(e => e.innerText)")
+        self.assertEqual(labels, ["Сейчас", "Годы и итоги", "Посещаемость"])
+        self.assertEqual(page.inner_text(".seg.three button.on"), "Посещаемость")
+        self.assertIn("2026/2027", page.inner_text(".yearnav .ttl"))
+        self.assertGreater(page.eval_on_selector_all(".cal-month", "e => e.length"), 1)
+        self.assertGreater(page.eval_on_selector_all(".cal-cell.ok", "e => e.length"), 5)                 # дни на уроках
+        self.assertEqual(page.eval_on_selector_all(".cal-cell.ill,.cal-cell.absent,.cal-cell.late", "e => e.length"), 0)
+        self.assertIn("Пропусков и опозданий нет", page.inner_text(".att"))
+        self.assertIn("Нажмите на день", page.inner_text("#main"))
+        self.assertIsNotNone(page.query_selector(".cal-cell.today"))
+        page.click(".cal-cell.ok")
+        self.assertIn("Был на всех уроках", page.inner_text(".dayinfo"))
+        self.assertIn("урок:", page.inner_text(".dayinfo"))                                              # и какие уроки были
+        self.assertEqual(errors, [])
+
+    def test_attendance_calendar_shows_every_absence_day_with_the_reason_and_subjects(self):
+        page, errors = self.open_attendance()
+        page.click('[data-year="1"]')
+        self.assertEqual(page.inner_text(".seg.small button.on"), "3 тр")                                  # по умолчанию последний триместр
+        page.click('[data-aterm="1"]')
+        titles = page.eval_on_selector_all(".cal-title", "els => els.map(e => e.innerText.toLowerCase())")
+        self.assertEqual(titles, ["сентябрь 2025", "октябрь 2025", "ноябрь 2025"])
+        for kind in ("ill", "absent", "late"):
+            self.assertEqual(page.eval_on_selector_all(f".cal-cell.{kind}", "e => e.length"), 1, kind)
+        # 1 октября 2025 это среда: перед первым числом две пустые клетки (неделя с понедельника)
+        self.assertEqual(page.evaluate("document.querySelectorAll('.cal-month')[1].querySelectorAll('.cal-cell.blank').length"), 2)
+        self.assertEqual(page.evaluate("document.querySelector('.cal-cell.ill').innerText"), "6")
+        page.click(".cal-cell.ill")
+        info = page.inner_text(".dayinfo")
+        for needle in ("6 октября, понедельник", "Пропуск по болезни", "1 урок: Рус. язык", "5 урок: Физкультура"):
+            self.assertIn(needle, info)
+        page.click(".cal-cell.absent")
+        self.assertIn("20 октября, понедельник", page.inner_text(".dayinfo"))
+        self.assertIn("Пропуск без уважительной причины", page.inner_text(".dayinfo"))
+        self.assertIn("2 урок: Математика", page.inner_text(".dayinfo"))
+        page.click(".cal-cell.absent")                                                                    # повторное нажатие закрывает
+        self.assertIn("Нажмите на день", page.inner_text("#main"))
+        self.assertEqual(page.eval_on_selector_all(".att-list .att-day", "e => e.length"), 3)             # ниже список дней с пропусками
+        self.assertIn("Рус. язык, Математика", page.inner_text(".att-list"))
+        self.assertTrue(page.eval_on_selector_all(".cal-cell.none", "els => els.length > 5 && els.every(e => e.tagName === 'SPAN')"))   # выходные не кнопки
+        self.assertGreater(page.eval_on_selector_all(".cal-cell.unk", "e => e.length"), 20)                # будни без пропусков
+        self.assertIn("не сообщает", page.inner_text("#main"))                                            # честная оговорка про прошлые годы
+        self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376)
+        self.assertEqual(errors, [])
+
+    def test_attendance_term_switch_and_tablet(self):
+        page, errors = self.open_attendance(1280, 800)
+        page.click('[data-year="1"]')
+        page.click('[data-aterm="2"]')
+        titles = page.eval_on_selector_all(".cal-title", "els => els.map(e => e.innerText.toLowerCase())")
+        self.assertEqual(titles[0], "декабрь 2025")
+        self.assertIn("Пропусков и опозданий нет", page.inner_text(".att"))
+        self.assertEqual(page.eval_on_selector_all(".cal-cell.ill", "e => e.length"), 0)
+        page.click('[data-aterm="1"]')
+        self.assertEqual(page.eval_on_selector_all(".cal-cell.ill", "e => e.length"), 1)
+        self.assertEqual(errors, [])
+
+    def test_attendance_screen_without_year_data_is_hidden(self):
+        from dev.sample import make_sample
+        d = make_sample()
+        d.pop("years")
+        d["status"], d["config"], d["version"] = {"needLogin": False, "error": None, "syncing": False}, {}, "t"
+        page, errors = self.mocked(d)
+        page.click('nav.tabs button[data-tab="marks"]')
+        self.assertIsNone(page.query_selector('[data-mview="att"]'))
+        self.assertEqual(errors, [])
+
+    # ---- учителя
+    def test_teachers_are_shown_in_homework_and_schedule(self):
+        page, errors = self.open(375, 812)
+        page.locator(".lesson2", has_text="Рус. язык").first.locator("[data-toggle]").click()
+        self.assertIn("Учитель: Иванова М. П.", page.locator(".lesson2.open .ldetails").first.inner_text())
+        page.click('nav.tabs button[data-tab="plan"]')
+        self.assertIn("Иванова М. П.", page.locator(".lesson", has_text="Рус. язык").first.inner_text())
+        self.assertEqual(errors, [])
+
+    def test_teachers_screen_lists_subjects_with_full_names_and_roles(self):
+        page, errors = self.open(375, 812)
+        page.click('nav.tabs button[data-tab="plan"]')
+        labels = page.eval_on_selector_all(".seg button", "els => els.map(e => e.innerText)")
+        self.assertEqual(labels, ["Расписание", "Учителя"])
+        page.click('[data-pview="teachers"]')
+        text = page.inner_text(".teacher-row >> nth=0") + page.inner_text("#main")
+        self.assertIn("Иванова Мария Петровна", text)
+        self.assertIn("· Учитель", text)
+        self.assertIsNone(page.query_selector(".nav"))                                                     # на этом экране дней нет
+        subjects = page.eval_on_selector_all(".teacher-row b", "els => els.map(e => e.innerText)")
+        self.assertEqual(subjects, sorted(subjects, key=lambda x: x.lower()))                              # по алфавиту
+        page.click('[data-pview="days"]')
+        self.assertIsNotNone(page.query_selector(".nav"))
+        self.assertEqual(errors, [])
+
+    def test_without_teacher_data_the_schedule_is_as_before(self):
+        from dev.sample import make_sample
+        d = make_sample()
+        d.pop("teachers")
+        d["status"], d["config"], d["version"] = {"needLogin": False, "error": None, "syncing": False}, {}, "t"
+        page, errors = self.mocked(d)
+        page.click('nav.tabs button[data-tab="plan"]')
+        self.assertIsNone(page.query_selector('[data-pview]'))
+        self.assertNotIn("Иванова", page.inner_text("#main"))
         self.assertEqual(errors, [])
 
     def test_attachment_link_and_lesson_details(self):

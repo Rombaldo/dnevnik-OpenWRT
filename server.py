@@ -72,7 +72,8 @@ def read_data():
         d = json.loads(fetcher.OUT.read_text())
     except (OSError, ValueError):
         d = {"updatedAt": None, "days": []}
-    d["status"] = {"needLogin": state["needLogin"], "error": state["error"], "syncing": state["syncing"]}
+    d["status"] = {"needLogin": state["needLogin"], "error": state["error"], "syncing": state["syncing"],
+                   "canRestore": core.backup_available(fetcher.DATA)}
     d.setdefault("config", {})
     d["version"] = VERSION
     return d
@@ -111,6 +112,29 @@ class Handler(BaseHTTPRequestHandler):
             if ok:
                 state["needLogin"], state["error"] = False, None
                 wake.set()
+            return self.send(200, json.dumps({"ok": ok, "message": message}, ensure_ascii=False), MIME[".json"])
+        if self.path == "/cgi-bin/logout":   # тот же адрес и те же шаги, что на роутере
+            if DEMO:
+                return self.send(200, json.dumps({"ok": False, "message": "Это демо: выход здесь не работает."}, ensure_ascii=False), MIME[".json"])
+            try:
+                payload = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 1024)).decode("utf-8"))
+                action = payload.get("action")
+                if action == "begin":
+                    return self.send(200, json.dumps({"ok": True, "token": core.begin_logout(fetcher.DATA)}), MIME[".json"])
+                if action == "confirm":
+                    ok, message = core.confirm_logout(fetcher.DATA, str(payload.get("token") or ""))
+                elif action == "restore":
+                    ok, message = core.restore_logout(fetcher.DATA)
+                    if ok:
+                        state["needLogin"], state["error"] = False, None
+                        wake.set()
+                else:
+                    ok, message = False, "Неизвестное действие."
+                if ok and action == "confirm":
+                    state["needLogin"], state["error"] = True, "Вы вышли из аккаунта."
+                    core.rebuild(fetcher.DATA, fetcher.OUT, config_path=ROOT / "config.json", version_path=ROOT / "VERSION")
+            except Exception:
+                ok, message = False, "Не удалось выполнить запрос."
             return self.send(200, json.dumps({"ok": ok, "message": message}, ensure_ascii=False), MIME[".json"])
         if self.path == "/cgi-bin/refresh":   # тот же адрес, что и на роутере
             if time.time() - state["lastTry"] >= MIN_MANUAL_GAP and not state["needLogin"]:

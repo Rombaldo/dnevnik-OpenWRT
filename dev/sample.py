@@ -50,18 +50,28 @@ def make_sample(today=None, seed=7):
     subjects = ["Англ. язык", "Математика", "Музыка", "Рус. язык"]
     no_absence = {"total": 120, "absent": 0, "ill": 0, "late": 0, "percent": 100, "days": []}
     with_absence = {"total": 249, "absent": 6, "ill": 5, "late": 1, "percent": 98, "days": [
-        {"date": "2025-10-06", "kind": "ill", "name": "Пропуск по болезни", "lessons": [1, 2, 3, 4, 5]},
-        {"date": "2025-10-20", "kind": "absent", "name": "Пропуск без уважительной причины", "lessons": [2]},
-        {"date": "2025-10-21", "kind": "late", "name": "Опоздание", "lessons": [1]}]}
+        {"date": "2025-10-06", "kind": "ill", "name": "Пропуск по болезни", "lessons": [1, 2, 3, 4, 5],
+         "items": [{"n": 1, "subject": "Рус. язык"}, {"n": 2, "subject": "Математика"}, {"n": 3, "subject": "Литература"},
+                   {"n": 4, "subject": "История"}, {"n": 5, "subject": "Физкультура"}]},
+        {"date": "2025-10-20", "kind": "absent", "name": "Пропуск без уважительной причины", "lessons": [2],
+         "items": [{"n": 2, "subject": "Математика"}]},
+        {"date": "2025-10-21", "kind": "late", "name": "Опоздание", "lessons": [1], "items": [{"n": 1, "subject": "Рус. язык"}]}]}
+    teachers = {n: [{"name": f"{fam} Мария Петровна", "short": f"{fam} М. П.", "role": "Учитель"}]
+                for n, fam in (("Рус. язык", "Иванова"), ("Математика", "Петрова"), ("История", "Сидорова"), ("Литература", "Иванова"),
+                               ("Англ. язык", "Орлова"), ("Физкультура", "Громов"), ("Музыка", "Белова"), ("Биология", "Зайцева"))}
     cur_terms = [{"number": 1, "name": "1 триместр", "attendance": no_absence,
+                  "start": (start).isoformat(), "finish": (today + timedelta(days=21)).isoformat(),
                   "subjects": [{"name": n, "marks": [str(rnd.choice([3, 4, 5])) for _ in range(6)], "average": "4,2"} for n in subjects]}]
+    spans = {1: ("2025-09-01", "2025-11-28"), 2: ("2025-12-01", "2026-02-27"), 3: ("2026-03-02", "2026-05-29")}
     past_terms = [{"number": k, "name": f"{k} триместр", "attendance": with_absence if k == 1 else dict(no_absence, total=243),
+                   "start": spans[k][0], "finish": spans[k][1],
                    "subjects": [{"name": n, "marks": [str(rnd.choice([3, 4, 5])) for _ in range(5)], "average": "4,1"} for n in subjects]}
                   for k in (1, 2, 3)]
     return {
         "updatedAt": datetime.now().isoformat(timespec="seconds"),
         "days": days,
         "student": {"name": "Аня", "school": 'МБОУ "Школа № 1"', "class": "5А"},
+        "teachers": teachers,
         "years": [
             {"year": 2026, "label": "2026/2027", "className": "5А", "periodLabel": "тр", "columns": 3, "current": True,
              "terms": cur_terms, "final": [{"name": n, "periods": [None, None, None], "year": None} for n in subjects]},

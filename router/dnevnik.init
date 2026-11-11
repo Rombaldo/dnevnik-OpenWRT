@@ -11,7 +11,8 @@ start_service() {
     cp -f "$APP"/web/* "$WWW"/
     cp -f "$APP/router/refresh.cgi" "$WWW/cgi-bin/refresh"
     cp -f "$APP/router/setup.cgi" "$WWW/cgi-bin/setup"
-    chmod 755 "$WWW" "$WWW/cgi-bin" "$WWW/cgi-bin/refresh" "$WWW/cgi-bin/setup"
+    cp -f "$APP/router/logout.cgi" "$WWW/cgi-bin/logout"
+    chmod 755 "$WWW" "$WWW/cgi-bin" "$WWW/cgi-bin/refresh" "$WWW/cgi-bin/setup" "$WWW/cgi-bin/logout"
     chmod 644 "$WWW"/*.* 2>/dev/null   # веб-сервер не отдаёт файлы, закрытые от остальных
     "$APP/router/setname.sh" >/dev/null 2>&1      # имя dnevnik.lan -> текущий адрес роутера
     # сразу показываем последние сохранённые данные, потом обновляемся с сайта

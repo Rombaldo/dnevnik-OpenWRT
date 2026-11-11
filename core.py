@@ -69,7 +69,7 @@ def norm_day(d):
             for m in w.get("marks") or []:
                 marks.append({"value": m.get("value"), "work": w.get("workName"), "created": m.get("createdDate")})
         lessons.append({
-            "n": l.get("number"), "start": start, "end": end,
+            "n": l.get("number"), "start": start, "end": end, "lessonId": str(l.get("id") or ""),
             "subject": (l.get("subject") or {}).get("name", "?"),
             "subjectId": (l.get("subject") or {}).get("id"),
             "groupId": l.get("groupId"),
@@ -156,6 +156,21 @@ class Client:
     def page(self, path):
         """Текст страницы сайта (нужен, чтобы найти номера ученика и школы)."""
         req = urllib.request.Request(self.base + path, headers={"User-Agent": USER_AGENT})
+        try:
+            with self.opener.open(req, timeout=self.timeout) as r:
+                if "login.dnevnik.ru" in r.geturl():
+                    raise NeedLogin("сайт отправил на страницу входа")
+                return r.read().decode("utf-8", "ignore")
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise NeedLogin("сессия истекла") from e
+            raise RuntimeError(f"сайт ответил {e.code}") from e
+
+    def fetch_html(self, url):
+        """Страница по полному адресу (только серверы Дневник.ру)."""
+        if self.base == BASE and not trusted_link(url):
+            raise RuntimeError("адрес не с сайта Дневник.ру")
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with self.opener.open(req, timeout=self.timeout) as r:
                 if "login.dnevnik.ru" in r.geturl():
@@ -314,12 +329,14 @@ def parse_attendance(data):
             low = name.lower()
             kind = "late" if "опозд" in low else "ill" if "болезн" in low else "absent"
             day = datetime.fromtimestamp(int(e["date"]), tz=timezone.utc).date().isoformat()
-            g = groups.setdefault((day, kind), {"date": day, "kind": kind, "name": name, "lessons": []})
+            g = groups.setdefault((day, kind), {"date": day, "kind": kind, "name": name, "lessons": [], "items": []})
             if isinstance(e.get("lessonNumber"), int):
                 g["lessons"].append(e["lessonNumber"])
+                g["items"].append({"n": e["lessonNumber"], "subject": clean(sub.get("name"))})
     days = sorted(groups.values(), key=lambda g: (g["date"], g["kind"]))
     for g in days:
         g["lessons"] = sorted(set(g["lessons"]))
+        g["items"] = sorted({(i["n"], i["subject"]): i for i in g["items"]}.values(), key=lambda i: (i["n"], i["subject"]))
     if not absent and not late and days:              # счётчиков нет, но журнал есть: считаем по журналу
         absent = sum(max(1, len(g["lessons"])) for g in days if g["kind"] != "late")
         ill = sum(max(1, len(g["lessons"])) for g in days if g["kind"] == "ill")
@@ -339,7 +356,14 @@ def parse_term(data, period):
         if marks or avg:
             subs.append({"name": clean(sub.get("name")), "marks": marks, "average": avg})
     subs.sort(key=lambda x: x["name"].lower())
-    return {"number": period["number"] + 1, "name": period["name"], "subjects": subs, "attendance": parse_attendance(data)}
+    def iso(ts_value):
+        try:
+            return datetime.fromtimestamp(int(ts_value), tz=timezone.utc).date().isoformat()
+        except (TypeError, ValueError, OverflowError, OSError):
+            return None
+
+    return {"number": period["number"] + 1, "name": period["name"], "subjects": subs, "attendance": parse_attendance(data),
+            "start": iso(data.get("dateStart")), "finish": iso(data.get("dateFinish"))}
 
 
 def fetch_study_info(client, ids, old_years=None, now=None):
@@ -381,9 +405,153 @@ def fetch_study_info(client, ids, old_years=None, now=None):
     return student, years
 
 
+# ---------------------------------------------------------------- учителя
+TEACHERS_EVERY_HOURS = 24 * 7       # учителя меняются редко: раз в неделю
+TEACHERS_PER_RUN = 20               # за один раз не больше 20 запросов к сайту
+
+
+def short_name(full):
+    """«Иванова Мария Петровна» -> «Иванова М. П.»"""
+    parts = clean(full).split(" ")
+    return " ".join([parts[0]] + [p[0] + "." for p in parts[1:] if p]) if parts and parts[0] else ""
+
+
+def parse_teachers(html):
+    """Учителя со страницы урока: блок «Учитель» с ФИО и должностью."""
+    m = re.search(r'id="ContentPartTeachers".*?<ul class="peopleS">(.*?)</ul>', html, re.S)
+    if not m:
+        return []
+    out = []
+    for li in re.findall(r"<li>(.*?)</li>", m.group(1), re.S):
+        name = re.search(r'<a [^>]*class="u"[^>]*>([^<]+)</a>', li)
+        if not name:
+            continue
+        role = re.search(r"<p>([^<]*)</p>", li)
+        full = clean(name.group(1).replace("&nbsp;", " "))
+        out.append({"name": full, "short": short_name(full), "role": clean(role.group(1)) if role else ""})
+    return out
+
+
+def lesson_url(base, school_id, lesson_id):
+    host = "https://schools.dnevnik.ru" if base == BASE else base
+    return f"{host}/v2/lesson?school={school_id}&lesson={lesson_id}"
+
+
+def fetch_teachers(client, ids, history, old=None, now=None):
+    """Учитель каждого предмета: берём по одному свежему уроку предмета. Уже найденные не запрашиваем повторно."""
+    now = now or time.time()
+    old = old or {}
+    by_subject = dict(old.get("bySubject") or {})
+    latest = {}
+    for day in sorted(history, reverse=True):
+        for l in history[day]["lessons"]:
+            if l.get("lessonId") and not l.get("canceled") and l["subject"] not in latest:
+                latest[l["subject"]] = l["lessonId"]
+    fresh = now - old.get("fetchedAt", 0) < TEACHERS_EVERY_HOURS * 3600
+    todo = [(name, lid) for name, lid in latest.items() if not (fresh and name in by_subject)]
+    done = 0
+    for name, lid in todo[:TEACHERS_PER_RUN]:
+        try:
+            html = client.fetch_html(lesson_url(client.base, ids["schoolId"], lid))
+        except NeedLogin:
+            raise
+        except Exception:
+            continue
+        teachers = parse_teachers(html)
+        if teachers or name not in by_subject:
+            by_subject[name] = teachers
+        done += 1
+    complete = len(todo) <= TEACHERS_PER_RUN
+    return {"fetchedAt": int(now) if complete else old.get("fetchedAt", 0), "bySubject": by_subject}
+
+
+# ---------------------------------------------------------------- выход из аккаунта
+LOGOUT_FILES = ["session.json", "credentials.json", "ids.json", "history.json", "student.json", "years.json", "teachers.json",
+                "login-state.json"]
+BACKUP_KEEP = 24 * 3600        # после выхода прежний вход можно вернуть в течение суток
+LOGOUT_MIN_WAIT = 2            # второе подтверждение раньше, чем через 2 секунды, не принимается
+LOGOUT_MAX_WAIT = 120          # и позже, чем через 2 минуты, тоже
+
+
+def _rm_tree(path):
+    path = Path(path)
+    if not path.exists():
+        return
+    for root, dirs, files in os.walk(path, topdown=False):
+        for f in files:
+            os.remove(os.path.join(root, f))
+        for d in dirs:
+            os.rmdir(os.path.join(root, d))
+    os.rmdir(path)
+
+
+def backup_available(data_dir):
+    info = read_json(Path(data_dir) / "backup" / "at.json", None)
+    return bool(info) and time.time() - info.get("at", 0) < BACKUP_KEEP
+
+
+def purge_old_backup(data_dir):
+    """Копия прежнего входа живёт сутки, потом удаляется."""
+    backup = Path(data_dir) / "backup"
+    if backup.exists() and not backup_available(data_dir):
+        _rm_tree(backup)
+
+
+def begin_logout(data_dir):
+    """Первое подтверждение выхода: выдаёт разовый код. Сам по себе он ничего не удаляет."""
+    data_dir = Path(data_dir)
+    token = os.urandom(8).hex()
+    write_private(data_dir / "logout-pending.json", json.dumps({"token": token, "at": time.time()}))
+    return token
+
+
+def confirm_logout(data_dir, token):
+    """Второе подтверждение: выход возможен только с кодом первого шага и не раньше чем через пару секунд после него.
+    Вход и сохранённые данные не стираются, а переезжают в резервную копию на сутки. Возвращает (успех, сообщение)."""
+    data_dir = Path(data_dir)
+    pending = read_json(data_dir / "logout-pending.json", None)
+    try:
+        (data_dir / "logout-pending.json").unlink()          # код одноразовый
+    except OSError:
+        pass
+    if not pending or not token or pending.get("token") != token:
+        return False, "Подтверждение не принято. Начните выход заново."
+    age = time.time() - pending.get("at", 0)
+    if age < LOGOUT_MIN_WAIT:
+        return False, "Слишком быстро. Нажмите ещё раз, когда прочитаете вопрос."
+    if age > LOGOUT_MAX_WAIT:
+        return False, "Подтверждение устарело. Начните выход заново."
+    backup = data_dir / "backup"
+    _rm_tree(backup)
+    backup.mkdir(mode=0o700, parents=True)
+    os.chmod(backup, 0o700)
+    for name in LOGOUT_FILES:
+        if (data_dir / name).exists():
+            os.replace(data_dir / name, backup / name)
+            os.chmod(backup / name, 0o600)                 # в копии, как и везде, читает только владелец
+    write_private(backup / "at.json", json.dumps({"at": time.time()}))
+    return True, "Вы вышли из аккаунта. Прежний вход можно вернуть в течение суток."
+
+
+def restore_logout(data_dir):
+    """Возвращает вход, который был до выхода (в течение суток)."""
+    data_dir = Path(data_dir)
+    if not (data_dir / "backup").exists():
+        return False, "Возвращать нечего: из аккаунта не выходили."
+    if not backup_available(data_dir):
+        _rm_tree(data_dir / "backup")
+        return False, "Прежнего входа уже нет: прошло больше суток."
+    backup = data_dir / "backup"
+    for name in LOGOUT_FILES:
+        if (backup / name).exists() and not (data_dir / name).exists():
+            os.replace(backup / name, data_dir / name)
+    _rm_tree(backup)
+    return True, "Прежний вход возвращён. Загружаю дневник."
+
+
 # ---------------------------------------------------------------- вход по логину и паролю
 LOGIN_URL = "https://login.dnevnik.ru/login/"
-STUDY_FORMAT = 2            # номер формата данных по годам: при смене сохранённое перезапрашивается
+STUDY_FORMAT = 3            # номер формата данных по годам: при смене сохранённое перезапрашивается
 INFO_EVERY_HOURS = 3        # ученика и итоговые оценки обновляем не чаще раза в 3 часа
 RELOGIN_PAUSE = 6 * 3600   # после неудачного входа повторяем не раньше чем через 6 часов: чтобы не заблокировали учётную запись
 
@@ -500,13 +668,15 @@ def read_json(path, default):
         return default
 
 
-def public_payload(history, updated_at, status, cfg=None, version=None, student=None, years=None):
+def public_payload(history, updated_at, status, cfg=None, version=None, student=None, years=None, teachers=None):
     days = [history[k] for k in sorted(history)]
     out = {"updatedAt": updated_at, "days": days, "status": status, "config": cfg or {}}
     if student:
         out["student"] = student
     if years:
         out["years"] = years
+    if teachers and teachers.get("bySubject"):
+        out["teachers"] = teachers["bySubject"]
     if version:
         out["version"] = version
     return out
@@ -552,12 +722,13 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
     extra = urlparse(base).hostname if base != BASE else None   # у настоящего сайта разрешён только Дневник.ру
     login_url = login_url or (LOGIN_URL if base == BASE else base + "/login/")
 
-    student_path, years_path = data_dir / "student.json", data_dir / "years.json"
-    student, years = read_json(student_path, None), read_json(years_path, None)
+    purge_old_backup(data_dir)
+    student_path, years_path, teachers_path = data_dir / "student.json", data_dir / "years.json", data_dir / "teachers.json"
+    student, years, teachers = read_json(student_path, None), read_json(years_path, None), read_json(teachers_path, None)
 
     def fail(err, kind):
-        status = {"needLogin": kind == "login", "error": str(err), "syncing": False}
-        write_public(out_path, public_payload(history, updated_prev, status, cfg, version, student, years))
+        status = {"needLogin": kind == "login", "error": str(err), "syncing": False, "canRestore": backup_available(data_dir)}
+        write_public(out_path, public_payload(history, updated_prev, status, cfg, version, student, years, teachers))
 
     def relogin():
         """Заходит заново по сохранённому логину и паролю."""
@@ -630,11 +801,20 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
             pass
         except Exception:
             pass
+    # учителя по предметам: нужные запрашиваем по одному уроку, найденные хранятся неделю
+    try:
+        ids = read_json(ids_path, None)
+        new_teachers = fetch_teachers(Client(jar, base=base), ids, history, teachers)
+        if new_teachers.get("bySubject") and new_teachers != teachers:
+            write_private(teachers_path, json.dumps(new_teachers, ensure_ascii=False))
+        teachers = new_teachers
+    except Exception:
+        pass
     age_h = (time.time() - session_path.stat().st_mtime) / 3600 if session_path.exists() else 1e9
     if relogged or age_h >= session_save_hours:
         write_private(session_path, json.dumps(jar_to_list(jar, also=extra), ensure_ascii=False))
     payload = public_payload(history, datetime.now().isoformat(timespec="seconds"),
-                             {"needLogin": False, "error": None, "syncing": False}, cfg, version, student, years)
+                             {"needLogin": False, "error": None, "syncing": False, "canRestore": False}, cfg, version, student, years, teachers)
     write_public(out_path, payload)
     return payload
 
@@ -647,7 +827,9 @@ def rebuild(data_dir, out_path, config_path=None, version_path=None):
     updated = datetime.fromtimestamp(hp.stat().st_mtime).isoformat(timespec="seconds") if hp.exists() else None
     cfg = read_json(config_path, {}) if config_path else {}
     version = Path(version_path).read_text().strip() if version_path and Path(version_path).exists() else None
+    purge_old_backup(data_dir)
     has_login = (data_dir / "session.json").exists() or (data_dir / "credentials.json").exists()
-    status = {"needLogin": not has_login, "error": None if has_login else "Введите логин и пароль от Дневник.ру.", "syncing": False}
-    write_public(out_path, public_payload(history, updated, status, cfg, version,
-                                          read_json(data_dir / "student.json", None), read_json(data_dir / "years.json", None)))
+    status = {"needLogin": not has_login, "error": None if has_login else "Введите логин и пароль от Дневник.ру.", "syncing": False,
+              "canRestore": backup_available(data_dir)}
+    write_public(out_path, public_payload(history, updated, status, cfg, version, read_json(data_dir / "student.json", None),
+                                          read_json(data_dir / "years.json", None), read_json(data_dir / "teachers.json", None)))

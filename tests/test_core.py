@@ -20,7 +20,7 @@ def raw_day(lessons, day=(2026, 11, 11)):
 
 def raw_lesson(**kw):
     base = {
-        "number": 1, "hours": {"startHour": "8", "startMinute": "00", "endHour": "8", "endMinute": "40"},
+        "id": "lesson-1", "number": 1, "hours": {"startHour": "8", "startMinute": "00", "endHour": "8", "endMinute": "40"},
         "isCanceled": False, "isEmpty": False, "theme": "Тема", "groupId": "g",
         "subject": {"id": "s1", "name": "Рус. язык"},
         "homework": {"text": "  упр 1  ", "attachments": []},
@@ -98,7 +98,10 @@ FINAL_JSON = {"subjects": [
         {"type": "Period", "periodNumber": 2, "marks": []}, {"type": "Year", "periodNumber": 0, "marks": [{"value": "4"}]}]},
     {"name": "Музыка", "finalWorks": [{"type": "Period", "periodNumber": 0, "marks": [{"value": "ЗЧ"}]},
                                        {"type": "Year", "periodNumber": 0, "marks": [{"value": "4"}, {"value": "5"}]}]}]}
-TERM_JSON = {"subjects": [
+TEACHER_HTML = ('<div id="ContentPartTeachers"><h3>Учитель</h3><ul class="peopleS"><li><div class="user_ava"></div> '
+                '<a href="https://dnevnik.ru/v2/user/user?user=1" title="x" class="u">Иванова&nbsp;Мария  Петровна</a> <p>Учитель</p></li>'
+                '<li><a href="/v2/user/user?user=2" class="u">Сидоров Пётр Иванович</a></li></ul></div><div>дальше</div>')
+TERM_JSON = {"dateStart": 1756684800, "dateFinish": 1764288000, "subjects": [
     {"name": "Рус. язык", "average": {"value": "3,5"}, "works": [
         {"date": 200, "marks": [{"value": "3"}]}, {"date": 100, "marks": [{"value": "4"}, {"value": "2"}]}],
      "totalLessonNumber": 40, "countAbsence": 3, "countIllAbsence": 2, "countBeingLate": 1, "lessonLogEntries": [
@@ -116,6 +119,8 @@ class FakeSite(http.server.BaseHTTPRequestHandler):
     login_posts = 0
     only_school = None          # если задано, дневник отдаёт уроки только для этой школы
     paths = []                  # какие адреса просили
+    lesson_requests = 0
+    lesson_fails = False
     final_fails = False
     captcha = False             # форма входа просит капчу
     password = "secret"
@@ -159,6 +164,13 @@ class FakeSite(http.server.BaseHTTPRequestHandler):
             return self._send(200, "<html>лента</html>")
         authed = f"DnevnikAuth_a={FakeSite.good_token}" in (self.headers.get("Cookie") or "")
         FakeSite.paths.append(self.path)
+        if path == "/v2/lesson":
+            FakeSite.lesson_requests += 1
+            if not authed:
+                return self._send(401, "login")
+            if FakeSite.lesson_fails:
+                return self._send(500, "oops")
+            return self._send(200, "<html>" + TEACHER_HTML + "</html>")
         if path.startswith("/marks/school/") and path.endswith("/period"):
             return self._send(200, STATE_HTML) if authed else self._send(401, "login")
         if path.startswith("/api/v2/marks/final/school/"):
@@ -224,7 +236,7 @@ class SyncTests(unittest.TestCase):
 
     def test_successful_sync_writes_everything(self):
         payload = self.run_sync()
-        self.assertEqual(payload["status"], {"needLogin": False, "error": None, "syncing": False})
+        self.assertEqual(payload["status"], {"needLogin": False, "error": None, "syncing": False, "canRestore": False})
         saved = json.loads(self.out.read_text())
         self.assertEqual([d["date"] for d in saved["days"]], ["2026-11-11", "2026-11-12"])
         self.assertEqual(saved["days"][0]["lessons"][0]["files"][0]["url"], "https://b5.csdnevnik.ru/geo.pdf")
@@ -468,6 +480,7 @@ class StudyInfoTests(unittest.TestCase):
     def setUp(self):
         FakeSite.good_token, FakeSite.only_school, FakeSite.captcha, FakeSite.password, FakeSite.login_posts = "good", "2222222222", False, "secret", 0
         FakeSite.paths, FakeSite.final_fails = [], False
+        FakeSite.lesson_requests, FakeSite.lesson_fails = 0, False
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.data, self.out = self.root / "data", self.root / "www" / "data.json"
@@ -511,6 +524,16 @@ class StudyInfoTests(unittest.TestCase):
         self.assertEqual([(d["date"], d["kind"], d["lessons"]) for d in a["days"]],
                          [("2025-10-06", "ill", [2, 3]), ("2025-10-20", "absent", [1]), ("2025-10-21", "late", [1])])
         self.assertEqual(a["days"][0]["name"], "Пропуск по болезни")                  # причину берём с сайта как есть
+
+    def test_missed_lessons_know_their_subjects(self):
+        a = core.parse_attendance(TERM_JSON)
+        first = a["days"][0]
+        self.assertEqual(first["items"], [{"n": 2, "subject": "Рус. язык"}, {"n": 3, "subject": "Рус. язык"}])   # один урок записан у двух предметов: берётся один
+
+    def test_term_has_its_dates(self):
+        term = core.parse_term(TERM_JSON, {"number": 0, "name": "1 триместр"})
+        self.assertEqual((term["start"], term["finish"]), ("2025-09-01", "2025-11-28"))
+        self.assertEqual(core.parse_term({"subjects": []}, {"number": 0, "name": "x"})["start"], None)
 
     def test_same_lesson_is_not_counted_twice(self):
         entry = {"id": "1", "lessonId": "same", "fullName": "Пропуск по болезни", "date": "1759708800", "lessonNumber": 2}
@@ -621,6 +644,204 @@ class StudyInfoTests(unittest.TestCase):
         saved = json.loads(self.out.read_text())
         self.assertEqual(saved["student"]["school"], 'МБОУ "Школа № 1"')
         self.assertEqual(len(saved["years"]), 2)
+
+
+class TeachersTests(unittest.TestCase):
+    def test_short_name(self):
+        self.assertEqual(core.short_name("Иванова Мария Петровна"), "Иванова М. П.")
+        self.assertEqual(core.short_name("  Сидоров   Пётр "), "Сидоров П.")
+        self.assertEqual(core.short_name("Иванова"), "Иванова")
+        self.assertEqual(core.short_name(""), "")
+
+    def test_parse_teachers_from_the_lesson_page(self):
+        t = core.parse_teachers(TEACHER_HTML)
+        self.assertEqual([x["name"] for x in t], ["Иванова Мария Петровна", "Сидоров Пётр Иванович"])    # &nbsp; и двойные пробелы убраны
+        self.assertEqual(t[0], {"name": "Иванова Мария Петровна", "short": "Иванова М. П.", "role": "Учитель"})
+        self.assertEqual(t[1]["role"], "")                                                              # должности может не быть
+
+    def test_page_without_teachers_gives_empty_list(self):
+        self.assertEqual(core.parse_teachers("<html>нет блока</html>"), [])
+        self.assertEqual(core.parse_teachers('<div id="ContentPartTeachers"><ul class="peopleS"></ul></div>'), [])
+
+
+class TeachersFetchTests(unittest.TestCase):
+    IDS = {"personId": "1111111111", "schoolId": "2222222222"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeSite)
+        cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def setUp(self):
+        FakeSite.good_token, FakeSite.only_school, FakeSite.captcha, FakeSite.password = "good", "2222222222", False, "secret"
+        FakeSite.lesson_requests, FakeSite.lesson_fails = 0, False
+        self.client = core.Client(core.login_with_password("kate", "secret", self.base + "/login/", self.base), base=self.base)
+        self.history = {
+            "2026-11-09": {"date": "2026-11-09", "weekday": "пн", "lessons": [
+                {"subject": "Рус. язык", "lessonId": "old-rus", "canceled": False}, {"subject": "Музыка", "lessonId": "m1", "canceled": False}]},
+            "2026-11-10": {"date": "2026-11-10", "weekday": "вт", "lessons": [
+                {"subject": "Рус. язык", "lessonId": "new-rus", "canceled": False}, {"subject": "Труд", "lessonId": "", "canceled": False},
+                {"subject": "История", "lessonId": "h1", "canceled": True}]}}
+
+    def test_one_request_per_subject_and_only_real_lessons(self):
+        t = core.fetch_teachers(self.client, self.IDS, self.history, now=1000)
+        self.assertEqual(sorted(t["bySubject"]), ["Музыка", "Рус. язык"])           # без номера урока и отменённых уроков предметов нет
+        self.assertEqual(FakeSite.lesson_requests, 2)
+        self.assertEqual(t["bySubject"]["Музыка"][0]["short"], "Иванова М. П.")
+
+    def test_known_subjects_are_not_asked_again_for_a_week(self):
+        t = core.fetch_teachers(self.client, self.IDS, self.history, now=1000)
+        FakeSite.lesson_requests = 0
+        core.fetch_teachers(self.client, self.IDS, self.history, old=t, now=1000 + 3600)
+        self.assertEqual(FakeSite.lesson_requests, 0)
+        core.fetch_teachers(self.client, self.IDS, self.history, old=t, now=1000 + 8 * 86400)
+        self.assertEqual(FakeSite.lesson_requests, 2)                                 # через неделю проверяем заново
+
+    def test_new_subject_is_picked_up_at_once(self):
+        t = core.fetch_teachers(self.client, self.IDS, self.history, now=1000)
+        self.history["2026-11-10"]["lessons"].append({"subject": "Физкультура", "lessonId": "f1", "canceled": False})
+        FakeSite.lesson_requests = 0
+        t2 = core.fetch_teachers(self.client, self.IDS, self.history, old=t, now=1000 + 60)
+        self.assertEqual(FakeSite.lesson_requests, 1)                                 # запросили только новый предмет
+        self.assertIn("Физкультура", t2["bySubject"])
+
+    def test_failed_page_keeps_what_was_known(self):
+        t = core.fetch_teachers(self.client, self.IDS, self.history, now=1000)
+        FakeSite.lesson_fails = True
+        t2 = core.fetch_teachers(self.client, self.IDS, self.history, old=t, now=1000 + 9 * 86400)
+        self.assertEqual(t2["bySubject"], t["bySubject"])                              # прежние данные не потеряны
+
+    def test_limit_per_run(self):
+        for i in range(30):
+            self.history["2026-11-10"]["lessons"].append({"subject": f"Предмет {i}", "lessonId": f"x{i}", "canceled": False})
+        t = core.fetch_teachers(self.client, self.IDS, self.history, now=1000)
+        self.assertEqual(FakeSite.lesson_requests, core.TEACHERS_PER_RUN)
+        self.assertEqual(t["fetchedAt"], 0)                                            # не всё найдено: считаем, что ещё не закончили
+        FakeSite.lesson_requests = 0
+        t = core.fetch_teachers(self.client, self.IDS, self.history, old=t, now=1100)
+        self.assertEqual(len(t["bySubject"]), 32)                                      # со второго раза добрали остальное
+        self.assertGreater(t["fetchedAt"], 0)
+
+    def test_only_dnevnik_pages_are_fetched_on_the_real_site(self):
+        real = core.Client(core.http.cookiejar.CookieJar(), base=core.BASE)
+        with self.assertRaises(RuntimeError):
+            real.fetch_html("https://evil.example.com/v2/lesson?x=1")
+
+
+class LogoutTests(unittest.TestCase):
+    """Выход из аккаунта: два шага, резервная копия на сутки, возврат входа."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.data = Path(self.tmp.name) / "data"
+        self.out = Path(self.tmp.name) / "www" / "data.json"
+        self.data.mkdir()
+        for name in core.LOGOUT_FILES:
+            (self.data / name).write_text(json.dumps({"name": name}))
+        (self.data / "history.json").write_text(json.dumps({"2026-11-11": {"date": "2026-11-11", "weekday": "ср", "lessons": []}}))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def pending_age(self, seconds):
+        """Делает вид, что первый шаг был seconds секунд назад."""
+        pend = json.loads((self.data / "logout-pending.json").read_text())
+        pend["at"] -= seconds
+        (self.data / "logout-pending.json").write_text(json.dumps(pend))
+
+    def logged_in_files(self):
+        return [n for n in core.LOGOUT_FILES if (self.data / n).exists()]
+
+    def test_confirm_right_after_begin_is_refused_and_nothing_is_removed(self):
+        token = core.begin_logout(self.data)
+        ok, msg = core.confirm_logout(self.data, token)                       # мгновенно: случайный двойной тап
+        self.assertFalse(ok)
+        self.assertEqual(len(self.logged_in_files()), len(core.LOGOUT_FILES))
+        ok, _ = core.confirm_logout(self.data, token)                         # код был одноразовый
+        self.assertFalse(ok)
+
+    def test_wrong_or_missing_token_is_refused(self):
+        core.begin_logout(self.data)
+        self.pending_age(5)
+        self.assertFalse(core.confirm_logout(self.data, "not-the-token")[0])
+        self.assertFalse(core.confirm_logout(self.data, "")[0])
+        self.assertFalse(core.confirm_logout(self.data, None)[0])
+        self.assertEqual(len(self.logged_in_files()), len(core.LOGOUT_FILES))
+
+    def test_stale_confirmation_is_refused(self):
+        token = core.begin_logout(self.data)
+        self.pending_age(300)
+        self.assertFalse(core.confirm_logout(self.data, token)[0])
+        self.assertEqual(len(self.logged_in_files()), len(core.LOGOUT_FILES))
+
+    def test_proper_logout_moves_everything_to_a_private_backup(self):
+        token = core.begin_logout(self.data)
+        self.pending_age(5)
+        ok, msg = core.confirm_logout(self.data, token)
+        self.assertTrue(ok, msg)
+        self.assertEqual(self.logged_in_files(), [])                          # на месте ничего не осталось
+        self.assertTrue(core.backup_available(self.data))
+        self.assertEqual(oct(os.stat(self.data / "backup").st_mode)[-3:], "700")
+        self.assertEqual(oct(os.stat(self.data / "backup" / "session.json").st_mode)[-3:], "600")
+
+    def test_page_after_logout_shows_no_personal_data_and_offers_restore(self):
+        token = core.begin_logout(self.data)
+        self.pending_age(5)
+        core.confirm_logout(self.data, token)
+        core.rebuild(self.data, self.out)
+        saved = json.loads(self.out.read_text())
+        self.assertTrue(saved["status"]["needLogin"])
+        self.assertTrue(saved["status"]["canRestore"])
+        self.assertEqual(saved["days"], [])
+        for key in ("student", "years", "teachers"):
+            self.assertNotIn(key, saved)                                       # ни оценок, ни имени, ни учителей
+
+    def test_restore_brings_everything_back(self):
+        token = core.begin_logout(self.data)
+        self.pending_age(5)
+        core.confirm_logout(self.data, token)
+        ok, msg = core.restore_logout(self.data)
+        self.assertTrue(ok, msg)
+        self.assertEqual(len(self.logged_in_files()), len(core.LOGOUT_FILES))
+        self.assertFalse((self.data / "backup").exists())
+        ok, msg = core.restore_logout(self.data)                               # второй раз возвращать нечего
+        self.assertFalse(ok)
+        self.assertIn("не выходили", msg)                                      # и сообщение честное
+
+    def test_restore_does_not_overwrite_a_new_login(self):
+        token = core.begin_logout(self.data)
+        self.pending_age(5)
+        core.confirm_logout(self.data, token)
+        (self.data / "session.json").write_text('{"name": "new"}')             # после выхода уже вошли другим
+        core.restore_logout(self.data)
+        self.assertEqual(json.loads((self.data / "session.json").read_text()), {"name": "new"})
+
+    def test_backup_lives_only_a_day(self):
+        token = core.begin_logout(self.data)
+        self.pending_age(5)
+        core.confirm_logout(self.data, token)
+        info = json.loads((self.data / "backup" / "at.json").read_text())
+        info["at"] -= core.BACKUP_KEEP + 60
+        (self.data / "backup" / "at.json").write_text(json.dumps(info))
+        self.assertFalse(core.backup_available(self.data))
+        self.assertFalse(core.restore_logout(self.data)[0])
+        self.assertFalse((self.data / "backup").exists())                      # устаревшая копия удалена
+
+    def test_rebuild_removes_an_expired_backup(self):
+        token = core.begin_logout(self.data)
+        self.pending_age(5)
+        core.confirm_logout(self.data, token)
+        info = json.loads((self.data / "backup" / "at.json").read_text())
+        info["at"] -= core.BACKUP_KEEP + 60
+        (self.data / "backup" / "at.json").write_text(json.dumps(info))
+        core.rebuild(self.data, self.out)
+        self.assertFalse((self.data / "backup").exists())
+        self.assertFalse(json.loads(self.out.read_text())["status"]["canRestore"])
 
 
 if __name__ == "__main__":

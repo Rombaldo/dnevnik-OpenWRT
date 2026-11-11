@@ -67,7 +67,7 @@ fi
 tar tzf "$TMP/src.tar.gz" >/dev/null 2>&1 || die "архив повреждён"
 mkdir -p "$TMP/x" && tar xzf "$TMP/src.tar.gz" -C "$TMP/x"
 SRC=$(find "$TMP/x" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-for f in core.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi; do
+for f in core.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/setname.sh; do
     [ -f "$SRC/$f" ] || die "в архиве нет файла $f"
 done
 NEW=$(cat "$SRC/VERSION")

@@ -264,6 +264,54 @@
   .att-day span:last-child { color: var(--muted); flex: 1; }
   .att-terms { margin-top: 10px; display: grid; gap: 6px; }
   .att-terms div { display: flex; justify-content: space-between; gap: 10px; font-size: 15px; padding: 8px 12px; border-radius: 12px; background: var(--bg); }
+
+  /* ---- экран «Посещаемость»: календарь по дням ---- */
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 12px 4px 4px; font-size: 14px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 14px; height: 14px; border-radius: 5px; display: inline-block; }
+  .cal-month { margin: 14px 0 0; }
+  .cal-title { font-weight: 800; font-size: 18px; margin: 0 4px 8px; text-transform: capitalize; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; background: var(--card); border-radius: 20px; padding: 12px; box-shadow: var(--shadow); }
+  .cal-wd { text-align: center; color: var(--muted); font-size: 12px; font-weight: 700; padding-bottom: 2px; text-transform: uppercase; }
+  .cal-cell { aspect-ratio: 1 / 1; min-width: 0; border: 2px solid transparent; border-radius: 12px; font: inherit; font-size: 16px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; background: transparent; color: var(--muted); padding: 0; }
+  button.cal-cell { cursor: pointer; }
+  .cal-cell.blank { visibility: hidden; }
+  .cal-cell.none { color: var(--line); font-weight: 500; }
+  .cal-cell.ok { background: var(--ok-soft); color: var(--ok); }
+  .cal-cell.unk { background: var(--bg); color: var(--ink); }
+  .cal-cell.future { background: var(--bg); color: var(--muted); }
+  .cal-cell.ill { background: #fff0d6; color: #b45309; }
+  .cal-cell.absent { background: #ffe0e0; color: #b3261e; }
+  .cal-cell.late { background: #e7ddff; color: #5a3fc0; }
+  @media (prefers-color-scheme: dark) {
+    .cal-cell.ill { background: #4a3716; color: #ffc277; } .cal-cell.absent { background: #4a1d1d; color: #ff9b95; } .cal-cell.late { background: #2f2656; color: #c7b6ff; }
+  }
+  .cal-cell.today { border-color: var(--brand); }
+  .cal-cell.sel { border-color: var(--ink); }
+  .legend .l-ok { background: var(--ok-soft); } .legend .l-unk { background: var(--bg); border: 1px solid var(--line); } .legend .l-ill { background: #fff0d6; }
+  .legend .l-absent { background: #ffe0e0; } .legend .l-late { background: #e7ddff; } .legend .l-none { background: transparent; border: 1px dashed var(--line); }
+  .dayinfo { margin-top: 12px; }
+  .dayinfo h3 { margin: 0 0 8px; font-size: 18px; }
+  .dp-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; }
+  .dp-row > span { font-size: 22px; line-height: 1.2; }
+  .dp-items { color: var(--muted); font-size: 15px; margin-top: 2px; }
+  .att-hint { color: var(--muted); font-size: 15px; margin: 12px 4px 0; text-align: center; }
+  .att-list { margin-top: 14px; }
+  .att-list .att-day { align-items: flex-start; }
+  .att-list .att-day span:last-child b { display: block; color: var(--ink); font-size: 15px; }
+  .seg.three button { font-size: 15px; padding: 0 4px; }
+  /* ---- учителя ---- */
+  .tline { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+  .teacher-row { display: flex; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); }
+  .teacher-row:first-child { border-top: 0; padding-top: 2px; }
+  .teacher-row:last-child { padding-bottom: 2px; }
+  .teacher-row .ic { width: 44px; height: 44px; min-width: 44px; font-size: 23px; border-radius: 14px; }
+  .teacher-row b { display: block; font-size: 17px; }
+  .teacher-row .tn { font-size: 16px; overflow-wrap: anywhere; }
+  .teacher-row .tr { color: var(--muted); font-size: 13px; }
+  /* ---- выход и возврат входа ---- */
+  .setup button.restore { width: 100%; min-height: 54px; margin: 6px 0 4px; border: 2px solid var(--brand); border-radius: 16px; background: transparent; color: var(--brand); font-size: 18px; font-weight: 800; }
   .empty { text-align: center; color: var(--muted); padding: 50px 10px; background: var(--card); border-radius: 22px; box-shadow: var(--shadow); }
   .empty .em { font-size: 54px; display: block; margin-bottom: 6px; }
 
@@ -359,7 +407,11 @@ function setupCard() {
   if (setupWait) return `<div class="card setup"><h2>Вход в Дневник.ру</h2><div class="msg good">${esc(setupMsg?.text || "Загружаю дневник…")}</div></div>`;
   const msg = setupMsg ? `<div class="msg ${setupMsg.ok ? "good" : "bad"}">${esc(setupMsg.text)}</div>`
     : (err && data?.status?.needLogin ? `<div class="msg bad">${esc(err)}</div>` : "");
+  const restore = data?.status?.canRestore ? `<button class="restore" type="button" data-restore>↩ Вернуть прежний вход</button>
+    <p class="fine">Вы только что вышли из аккаунта: прежний вход сохранён на сутки, его можно вернуть.</p>` : "";
+  const cancel = showSetup && data?.days?.length ? `<button class="linkbtn" type="button" data-setup-cancel>Отмена, оставить как есть</button>` : "";
   return `<div class="card setup"><h2>Вход в Дневник.ру</h2>
+    ${restore}
     <p>Введите логин и пароль ученика от <b>Дневник.ру</b> (это не логин и пароль от Госуслуг). Вводить нужно один раз: дальше дневник будет обновляться сам.</p>
     <form id="setup-form" autocomplete="on">
       <label for="s-login">Логин</label>
@@ -367,11 +419,14 @@ function setupCard() {
       <label for="s-pass">Пароль</label>
       <input id="s-pass" name="password" type="password" autocomplete="current-password">
       <button class="go" type="submit">Войти</button>
-    </form>${msg}
-    <details><summary>Где взять логин и пароль?</summary>
-      <p>Войдите на dnevnik.ru, как обычно (хоть через Госуслуги), откройте профиль ученика: «Настройки» → «Логин и пароль». Там написан логин.
-      Пароль от Дневник.ру отдельный: если его не знаете, задайте новый кнопкой «Изменить» на той же странице и введите здесь.
-      Пароль от Госуслуг вводить сюда не нужно.</p></details>
+    </form>${msg}${cancel}
+    <details><summary>У нас вход только через Госуслуги. Что делать?</summary>
+      <p><b>Пароль от Госуслуг сюда вводить нельзя</b>: чужим программам его доверять небезопасно. Нужен отдельный логин и пароль Дневник.ру:
+      они у ученика есть, но вы могли их ни разу не видеть.</p>
+      <p><b>1.</b> Войдите на dnevnik.ru через Госуслуги, как обычно.<br><b>2.</b> Откройте профиль ученика → «Настройки» → «Логин и пароль»: там написан логин.<br>
+      <b>3.</b> Нажмите «Изменить» у пароля и задайте свой новый пароль. Если сайт просит старый пароль, сначала укажите свой телефон в разделе
+      «Контактные данные» и восстановите пароль по СМС.<br><b>4.</b> Введите здесь логин и этот новый пароль.</p>
+      <p>Если так не получается, вход через Госуслуги делают один раз на компьютере: см. инструкцию «Запасной вариант» в README на GitHub (Rombaldo/dnevnik-OpenWRT).</p></details>
     <p class="fine">Пароль хранится только на вашем роутере, в закрытом файле. Он нужен, чтобы дневник сам входил заново, когда вход на сайте истекает.</p></div>`;
 }
 
@@ -389,7 +444,11 @@ async function submitSetup(form) {
   setupMsg = { ok: !!res.ok, text: res.message || "Не получилось." };
   if (!res.ok) return render();
   setupWait = true; render();
-  for (let i = 0; i < 40; i++) {            // ждём до ~2.5 минут, пока дневник загрузится
+  await waitForDiary();
+}
+
+async function waitForDiary() {            // ждём до ~2.5 минут, пока дневник загрузится
+  for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 4000));
     try {
       const d = await (await fetch("data.json", { cache: "no-store" })).json();
@@ -400,26 +459,62 @@ async function submitSetup(form) {
   load();
 }
 
+async function restoreLogin() {            // вернуть вход, который был до выхода (в течение суток)
+  const r = await api("cgi-bin/logout", { action: "restore" });
+  setupMsg = { ok: !!r.ok, text: r.message || "Не получилось." };
+  if (!r.ok) return render();
+  setupWait = true; render();
+  await waitForDiary();
+}
+
 
 // ---------- Смена логина и пароля: два подтверждения подряд, чтобы нельзя было нажать случайно ----------
-let confirmStep = 0, confirmReadyAt = 0;
+let confirmStep = 0, confirmReadyAt = 0, confirmBusy = false, confirmError = "", logoutToken = null;
+async function api(path, body) {
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return await r.json();
+  } catch { return { ok: false, message: "Не получилось связаться с роутером. Проверьте Wi-Fi и попробуйте снова." }; }
+}
 function confirmModal() {
   if (!confirmStep) return "";
   const who = data?.student?.name ? `дневник ${esc(data.student.name)}` : "дневник";
+  if (confirmError) return `<div class="modal-back" data-modal-back><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mtitle">
+    <h3 id="mtitle">Не получилось</h3><p>${esc(confirmError)}</p><div class="mbtns"><button class="safe" data-confirm="no">Закрыть</button></div></div></div>`;
   const first = confirmStep === 1;
   const wait = Math.max(0, Math.ceil((confirmReadyAt - Date.now()) / 1000));
   return `<div class="modal-back" data-modal-back><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mtitle">
-    <h3 id="mtitle">${first ? "Сменить логин и пароль?" : "Вы точно хотите выйти из этого аккаунта?"}</h3>
+    <h3 id="mtitle">${first ? "Выйти из аккаунта?" : "Вы точно хотите выйти из этого аккаунта?"}</h3>
     <p>${first
-      ? `Сейчас ${who} работает. Если ввести другой логин и пароль, откроется уже другой ученик. Сменить вход?`
-      : `Показывать ${who} перестанет, пока вы не введёте новый вход. Если нажали случайно, выберите «Нет, оставить как есть».`}</p>
+      ? `Сейчас ${who} работает. Если выйти, он пропадёт с этого экрана, и придётся входить заново. Выйти?`
+      : `Показывать ${who} перестанет. Войти заново можно только по логину и паролю Дневник.ру (вход через Госуслуги делается на компьютере). Прежний вход мы сохраним на сутки: его можно будет вернуть. Если нажали случайно, выберите «Нет, оставить как есть».`}</p>
     <div class="mbtns">
       <button class="safe" data-confirm="no">${first ? "Отмена" : "Нет, оставить как есть"}</button>
-      <button class="danger" data-confirm="yes" ${first || !wait ? "" : "disabled"}>${first ? "Да, сменить" : (wait ? `Да, выйти (подождите ${wait})` : "Да, выйти и ввести другой")}</button>
+      <button class="danger" data-confirm="yes" ${(first ? confirmBusy : (wait || confirmBusy)) ? "disabled" : ""}>${first ? (confirmBusy ? "Секунду…" : "Да, выйти") : (confirmBusy ? "Выхожу…" : wait ? `Да, выйти (подождите ${wait})` : "Да, выйти из аккаунта")}</button>
     </div></div></div>`;
 }
-function closeConfirm() { confirmStep = 0; render(); }
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && confirmStep) closeConfirm(); });
+function closeConfirm() { confirmStep = 0; confirmError = ""; confirmBusy = false; logoutToken = null; render(); }
+async function startLogout() {                       // первое подтверждение: роутер выдаёт разовый код
+  confirmBusy = true; render();
+  const r = await api("cgi-bin/logout", { action: "begin" });
+  confirmBusy = false;
+  if (r.ok && r.token) { logoutToken = r.token; confirmStep = 2; confirmReadyAt = Date.now() + 2500; } else confirmError = r.message || "Не получилось.";
+  render();
+}
+async function finishLogout() {                      // второе подтверждение: выход возможен только с кодом первого
+  confirmBusy = true; render();
+  const r = await api("cgi-bin/logout", { action: "confirm", token: logoutToken });
+  confirmBusy = false; logoutToken = null;
+  if (!r.ok) { confirmError = r.message || "Не получилось."; return render(); }
+  confirmStep = 0;
+  try { localStorage.removeItem("cache"); localStorage.removeItem("done"); } catch {}      // на устройстве ничего от прежнего аккаунта не остаётся
+  showSetup = false; marksView = "now"; yearIdx = 0; attDay = null; planView = "days";
+  setupMsg = { ok: true, text: r.message || "Вы вышли из аккаунта." };
+  data = null;
+  await load();
+  window.scrollTo(0, 0);
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && confirmStep && !confirmBusy) closeConfirm(); });
 
 function statusBanner() {
   let h = banner;
@@ -463,7 +558,7 @@ function render() {
     const [main, aside] = tab === "hw" ? viewHw() : tab === "marks" ? viewMarks() : viewPlan();
     body = `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
   }
-  const changeLogin = !window.__DATA__ && data?.status && !showSetup && !needSetup ? `<button class="linkbtn" data-change-login>Сменить логин и пароль</button>` : "";
+  const changeLogin = !window.__DATA__ && data?.status && !showSetup && !needSetup ? `<button class="linkbtn" data-change-login>Выйти из аккаунта</button>` : "";
   $("#modal").innerHTML = confirmModal();
   if (confirmStep) {
     const safe = document.querySelector("#modal .safe");
@@ -506,7 +601,7 @@ function dayScheduleCard(date, title) {
     return `<div class="lesson ${l.canceled ? "off" : ""} ${on ? "now" : ""}" style="${s.style}"><div class="n">${esc(l.n)}</div>
       <div class="ic">${s.icon}</div>
       <div class="t"><b>${esc(l.subject)}${on ? '<span class="now-tag">идёт сейчас</span>' : ""}</b>
-        <span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · отменён" : ""}</span>${l.theme ? `<span class="theme">${esc(l.theme)}</span>` : ""}</div>
+        <span>${esc(l.start)}–${esc(l.end)}${teacherShort(l.subject) ? ` · ${esc(teacherShort(l.subject))}` : ""}${l.canceled ? " · отменён" : ""}</span>${l.theme ? `<span class="theme">${esc(l.theme)}</span>` : ""}</div>
       ${l.marks.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}</div>`;
   }).join("")}</div>`;
 }
@@ -545,7 +640,7 @@ function dayCard(d, done, focusId) {
       <div class="lhead" data-toggle><span class="lic">${s.icon}</span>
         <div class="lt"><b>${esc(l.n)}. ${esc(l.subject)}</b><span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · урок отменён" : ""}</span></div>
         ${l.marks.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}<span class="chev">›</span></div>
-      <div class="ldetails">${l.theme ? `<b>Тема урока:</b> ${esc(l.theme)}` : "Тема урока пока не указана"}</div>
+      <div class="ldetails">${teacherShort(l.subject) ? `<div><b>Учитель:</b> ${esc(teacherShort(l.subject))}</div>` : ""}${l.theme ? `<b>Тема урока:</b> ${esc(l.theme)}` : "Тема урока пока не указана"}</div>
       ${strip}</div>`;
   }).join("");
   return `<section class="day ${allDone ? "all-done" : ""}" ${d.date === focusId ? 'id="focus-day"' : ""}>
@@ -592,7 +687,7 @@ function lessonRanges(list) {
   for (let i = 0; i < a.length; ) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? `${a[i]}–${a[j]}` : `${a[i]}`); i = j + 1; }
   return out.join(", ");
 }
-function attendanceCard(a, title = "Посещаемость") {
+function attendanceCard(a, title = "Посещаемость", withDays = true) {
   if (!a) return "";
   const absent = Number(a.absent) || 0, ill = Number(a.ill) || 0, late = Number(a.late) || 0, other = absent - ill;
   const parts = [];
@@ -601,7 +696,7 @@ function attendanceCard(a, title = "Посещаемость") {
   const text = !absent && !late
     ? `<b>🎉 Пропусков и опозданий нет</b><br>Всего уроков: ${Number(a.total) || 0}`
     : `<b>Пропущено ${lessonsWord(absent)}</b>${parts.length ? `<br>${parts.join(", ")}` : ""}${late ? `<br>Опозданий: ${late}` : ""}<br>Всего уроков: ${Number(a.total) || 0}`;
-  const days = (a.days || []).length ? `<details><summary>Показать дни (${a.days.length})</summary>${a.days.map((d) => {
+  const days = withDays && (a.days || []).length ? `<details><summary>Показать дни (${a.days.length})</summary>${a.days.map((d) => {
     const dt = parse(d.date);
     return `<div class="att-day"><span>${ATT_ICON[d.kind] || "•"}</span><b>${dt.getDate()} ${MONTHS[dt.getMonth()]}, ${WDAY[dt.getDay()]}</b>
       <span>${esc(d.name)}${(d.lessons || []).length ? `, ${(d.lessons || []).length > 1 ? "уроки" : "урок"} ${esc(lessonRanges(d.lessons))}` : ""}</span></div>`; }).join("")}</details>` : "";
@@ -625,6 +720,109 @@ function currentAttendanceCard() {
   return t ? attendanceCard(t.attendance, `Посещаемость (${t.number} ${y.periodLabel === "тр" ? "тр" : "пер."})`) : "";
 }
 
+// ---------- Экран «Посещаемость»: календарь по дням ----------
+const MONTHS_FULL = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const WD_FULL = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+let attDay = null, attTerm = {};
+
+function schoolDayMap() { const m = new Map(); for (const d of data.days) { const ls = d.lessons.filter((l) => !l.canceled); if (ls.length) m.set(d.date, ls); } return m; }
+function termRange(t) {
+  const ds = (t.attendance?.days || []).map((d) => d.date).sort();
+  const start = t.start || ds[0], finish = t.finish || ds[ds.length - 1];
+  return start && finish ? [start, finish] : null;
+}
+
+function calendarHtml(t, y) {
+  const range = termRange(t);
+  if (!range) return "";
+  const [start, finish] = range, today = todayIso();
+  const byDay = {};
+  for (const d of t.attendance.days) (byDay[d.date] ??= []).push(d);
+  const school = y.current ? schoolDayMap() : null;
+  let cur = parse(start); cur = new Date(cur.getFullYear(), cur.getMonth(), 1);
+  const end = parse(finish);
+  let out = "";
+  while (cur <= end) {
+    const yr = cur.getFullYear(), mo = cur.getMonth(), n = new Date(yr, mo + 1, 0).getDate();
+    const lead = (new Date(yr, mo, 1).getDay() + 6) % 7;                   // неделя начинается с понедельника
+    let cells = "";
+    for (let i = 0; i < lead; i++) cells += `<span class="cal-cell blank"></span>`;
+    for (let d = 1; d <= n; d++) {
+      const dt = new Date(yr, mo, d), date = iso(dt), wd = dt.getDay(), ents = byDay[date];
+      if (date < start || date > finish) { cells += `<span class="cal-cell blank"></span>`; continue; }
+      let kind;
+      if (ents) kind = ents.some((e) => e.kind === "absent") ? "absent" : ents.some((e) => e.kind === "ill") ? "ill" : "late";
+      else if (school) kind = school.has(date) ? (date <= today ? "ok" : "future") : "none";
+      else kind = wd === 0 || wd === 6 ? "none" : "unk";
+      const cl = `cal-cell ${kind} ${date === today ? "today" : ""} ${date === attDay ? "sel" : ""}`;
+      cells += kind === "none" ? `<span class="${cl}">${d}</span>` : `<button class="${cl}" data-aday="${date}" aria-label="${d} ${MONTHS_GEN[mo]}">${d}</button>`;
+    }
+    out += `<div class="cal-month"><div class="cal-title">${MONTHS_FULL[mo]} ${yr}</div><div class="cal-grid">
+      ${["пн", "вт", "ср", "чт", "пт", "сб", "вс"].map((w) => `<span class="cal-wd">${w}</span>`).join("")}${cells}</div></div>`;
+    cur = new Date(yr, mo + 1, 1);
+  }
+  return out;
+}
+
+function dayInfoHtml(t, y) {
+  if (!attDay) return `<div class="att-hint">Нажмите на день в календаре, чтобы увидеть подробности.</div>`;
+  const dt = parse(attDay), title = `${dt.getDate()} ${MONTHS_GEN[dt.getMonth()]}, ${WD_FULL[dt.getDay()]}`;
+  const ents = (t.attendance?.days || []).filter((d) => d.date === attDay);
+  let body;
+  if (ents.length) {
+    body = ents.map((e) => {
+      const items = e.items?.length ? e.items.map((i) => `<div>${esc(i.n)} урок: ${esc(i.subject)}</div>`).join("")
+        : e.lessons?.length ? `<div>${e.lessons.length > 1 ? "уроки" : "урок"} ${esc(lessonRanges(e.lessons))}</div>` : "";
+      return `<div class="dp-row"><span>${ATT_ICON[e.kind] || "•"}</span><div><b>${esc(e.name)}</b><div class="dp-items">${items}</div></div></div>`;
+    }).join("");
+  } else if (y.current) {
+    const ls = schoolDayMap().get(attDay);
+    body = ls ? `<div class="dp-row"><span>${attDay <= todayIso() ? "✅" : "🗓"}</span><div><b>${attDay <= todayIso() ? "Был на всех уроках" : "Уроки ещё впереди"}</b>
+      <div class="dp-items">${ls.map((l) => `<div>${esc(l.n)} урок: ${esc(l.subject)}</div>`).join("")}</div></div></div>`
+      : `<div class="dp-row"><span>🏠</span><div><b>Выходной день или уроков не было</b></div></div>`;
+  } else {
+    body = `<div class="dp-row"><span>✅</span><div><b>Пропусков в этот день нет</b></div></div>`;
+  }
+  return `<div class="card dayinfo"><h3>${esc(title)}</h3>${body}</div>`;
+}
+
+function attDaysList(t) {
+  const days = t.attendance?.days || [];
+  if (!days.length) return "";
+  return `<h2>Дни с пропусками</h2><div class="card att-list">${days.map((d) => {
+    const dt = parse(d.date), subjects = [...new Set((d.items || []).map((i) => i.subject))];
+    return `<div class="att-day"><span>${ATT_ICON[d.kind] || "•"}</span><b>${dt.getDate()} ${MONTHS[dt.getMonth()]}, ${WDAY[dt.getDay()]}</b>
+      <span><b>${esc(d.name)}${d.lessons?.length ? `, ${d.lessons.length > 1 ? "уроки" : "урок"} ${esc(lessonRanges(d.lessons))}` : ""}</b>${subjects.length ? esc(subjects.join(", ")) : ""}</span></div>`;
+  }).join("")}</div>`;
+}
+
+function yearNavHtml(years, y) {
+  return `<div class="nav yearnav"><button data-year="1" ${yearIdx >= years.length - 1 ? "disabled" : ""} aria-label="Прошлый год">‹</button>
+    <div class="ttl">${esc(y.label)} (${esc(y.className)})<small>${y.current ? "этот учебный год" : "прошлый учебный год"}</small></div>
+    <button data-year="-1" ${yearIdx <= 0 ? "disabled" : ""} aria-label="Следующий год">›</button></div>`;
+}
+
+function viewAttendance() {
+  const years = data.years || [];
+  if (!years.length) return `<div class="empty"><span class="em">🗓</span>Данные о посещаемости появятся после следующего обновления.</div>`;
+  yearIdx = Math.max(0, Math.min(years.length - 1, yearIdx));
+  const y = years[yearIdx], terms = y.terms.filter((t) => t.attendance);
+  let out = yearNavHtml(years, y);
+  if (!terms.length) return out + `<div class="empty"><span class="em">🌱</span>За этот год данных о посещаемости нет.</div>`;
+  let sel = attTerm[y.label];
+  if (!sel || !terms.some((t) => String(t.number) === sel)) sel = String(terms[terms.length - 1].number);
+  attTerm[y.label] = sel;
+  const t = terms.find((x) => String(x.number) === sel), lab = y.periodLabel === "тр" ? "тр" : "пер.";
+  out += seg(terms.map((x) => [String(x.number), `${x.number} ${lab}`]), sel, "data-aterm", "small");
+  out += `<div style="margin-top:12px">${attendanceCard(t.attendance, "Посещаемость", false)}</div>`;
+  out += `<div class="legend"><span><i class="l-${y.current ? "ok" : "unk"}"></i>${y.current ? "был на уроках" : "пропусков нет"}</span><span><i class="l-ill"></i>болезнь</span>
+    <span><i class="l-absent"></i>пропуск</span><span><i class="l-late"></i>опоздание</span><span><i class="l-none"></i>нет уроков</span></div>`;
+  out += calendarHtml(t, y) + dayInfoHtml(t, y) + attDaysList(t);
+  if (!y.current) out += `<div class="term-sub" style="margin-top:12px">За прошлые годы сайт не сообщает, какие дни были учебными, поэтому будни без пропусков показаны светлыми, а выходные без цвета.</div>`;
+  return out;
+}
+
 function viewYears() {
   const years = data.years || [];
   if (!years.length) return `<div class="empty"><span class="em">📚</span>Итоговые оценки появятся после следующего обновления.</div>`;
@@ -635,9 +833,7 @@ function viewYears() {
   let sel = termSel[y.label];
   if (!sel || (sel !== "final" && !termKeys.includes(sel))) sel = y.current ? (termKeys[termKeys.length - 1] || "final") : "final";
   termSel[y.label] = sel;
-  let out = `<div class="nav yearnav"><button data-year="1" ${yearIdx >= years.length - 1 ? "disabled" : ""} aria-label="Прошлый год">‹</button>
-    <div class="ttl">${esc(y.label)} (${esc(y.className)})<small>${y.current ? "этот учебный год" : "прошлый учебный год"}</small></div>
-    <button data-year="-1" ${yearIdx <= 0 ? "disabled" : ""} aria-label="Следующий год">›</button></div>`;
+  let out = yearNavHtml(years, y);
   out += seg([...y.terms.map((t) => [String(t.number), `${t.number} ${lab}`]), ["final", "Итог"]], sel, "data-term", "small");
 
   if (sel === "final") {
@@ -665,8 +861,9 @@ function viewYears() {
 
 function viewMarks() {
   const hasYears = (data.years || []).length > 0;
-  const tabs = hasYears ? seg([["now", "Сейчас"], ["years", "По годам и итоги"]], marksView, "data-mview") : "";
+  const tabs = hasYears ? seg([["now", "Сейчас"], ["years", "Годы и итоги"], ["att", "Посещаемость"]], marksView, "data-mview", "three") : "";
   if (hasYears && marksView === "years") return [tabs + viewYears(), ""];
+  if (hasYears && marksView === "att") return [tabs + viewAttendance(), ""];
   const marks = allMarks();
   if (!marks.length) return [tabs + `<div class="empty"><span class="em">⭐</span>Оценок пока нет.</div>`, ""];
   let out = tabs + currentAttendanceCard() + recentMarksCard(8);
@@ -687,12 +884,29 @@ function viewMarks() {
 }
 
 // ---------- Расписание ----------
+// ---------- Учителя ----------
+let planView = "days";
+const teachersOf = (subject) => data?.teachers?.[subject] || [];
+const teacherShort = (subject) => teachersOf(subject).map((t) => t.short || t.name).join(", ");
+function viewTeachers() {
+  const names = Object.keys(data.teachers || {}).filter((n) => (data.teachers[n] || []).length).sort((a, b) => a.localeCompare(b, "ru"));
+  if (!names.length) return `<div class="empty"><span class="em">👩‍🏫</span>Учителя появятся после следующего обновления.</div>`;
+  return `<div class="card">${names.map((n) => {
+    const s = subj(n);
+    return `<div class="teacher-row" style="${s.style}"><div class="ic">${s.icon}</div><div><b>${esc(n)}</b>${teachersOf(n).map((t) =>
+      `<div class="tn">${esc(t.name)}${t.role ? ` <span class="tr">· ${esc(t.role)}</span>` : ""}</div>`).join("")}</div></div>`;
+  }).join("")}</div>`;
+}
+
 function viewPlan() {
+  const hasTeachers = Object.values(data.teachers || {}).some((t) => t.length);
+  const ptabs = hasTeachers ? seg([["days", "Расписание"], ["teachers", "Учителя"]], planView, "data-pview") : "";
+  if (hasTeachers && planView === "teachers") return [ptabs + viewTeachers(), ""];
   const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
-  if (!dates.length) return [`<div class="empty"><span class="em">🗓</span>Расписания пока нет.</div>`, ""];
+  if (!dates.length) return [ptabs + `<div class="empty"><span class="em">🗓</span>Расписания пока нет.</div>`, ""];
   if (!planDate || !dates.includes(planDate)) planDate = dates.find((d) => d >= todayIso()) ?? dates[dates.length - 1];
   const i = dates.indexOf(planDate), day = data.days.find((d) => d.date === planDate), r = rel(planDate);
-  const out = `<div class="nav"><button data-nav="-1" ${i === 0 ? "disabled" : ""} aria-label="Раньше">‹</button>
+  const out = ptabs + `<div class="nav"><button data-nav="-1" ${i === 0 ? "disabled" : ""} aria-label="Раньше">‹</button>
     <div class="ttl">${r ? r + ", " : ""}${esc(WD[day.weekday] ?? "")}<small>${dayName(day.date)}</small></div>
     <button data-nav="1" ${i === dates.length - 1 ? "disabled" : ""} aria-label="Позже">›</button></div>
     <div class="plan-body ${planAnim}" id="plan-body">${dayScheduleCard(planDate, "")}</div>
@@ -716,7 +930,7 @@ document.addEventListener("touchstart", (e) => {
   touch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null;
 }, { passive: true });
 document.addEventListener("touchend", (e) => {
-  if (!touch || tab !== "plan" || !data?.days?.length) return;
+  if (!touch || tab !== "plan" || planView !== "days" || !data?.days?.length) return;
   const t = e.changedTouches[0], dx = t.clientX - touch.x, dy = t.clientY - touch.y, fast = Date.now() - touch.t < 900;
   touch = null;
   if (fast && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) shiftPlan(dx < 0 ? 1 : -1);
@@ -728,19 +942,28 @@ document.addEventListener("submit", (e) => {
 });
 
 document.addEventListener("click", (e) => {
-  if (e.target.closest("[data-change-login]")) { confirmStep = 1; render(); return; }
+  if (e.target.closest("[data-change-login]")) { confirmStep = 1; confirmError = ""; render(); return; }
   const cf = e.target.closest("[data-confirm]");
   if (cf) {
-    if (cf.dataset.confirm === "no" || cf.disabled) { if (cf.dataset.confirm === "no") closeConfirm(); return; }
-    if (confirmStep === 1) { confirmStep = 2; confirmReadyAt = Date.now() + 2000; render(); return; }
-    confirmStep = 0; showSetup = true; setupMsg = null; render(); window.scrollTo(0, 0); return;     // второе подтверждение
+    if (cf.dataset.confirm === "no") { closeConfirm(); return; }
+    if (cf.disabled || confirmBusy) return;
+    if (confirmStep === 1) startLogout(); else finishLogout();
+    return;
   }
-  if (e.target.matches("[data-modal-back]")) { closeConfirm(); return; }
+  if (e.target.matches("[data-modal-back]")) { if (!confirmBusy) closeConfirm(); return; }
+  if (e.target.closest("[data-setup-cancel]")) { showSetup = false; setupMsg = null; render(); return; }
+  if (e.target.closest("[data-restore]")) { restoreLogin(); return; }
   if (e.target.closest("[data-setup]")) { showSetup = !showSetup; setupMsg = null; render(); window.scrollTo(0, 0); return; }
   const mv = e.target.closest("[data-mview]");
-  if (mv) { marksView = mv.dataset.mview; render(); return; }
+  if (mv) { marksView = mv.dataset.mview; attDay = null; render(); return; }
+  const ad = e.target.closest("[data-aday]");
+  if (ad) { attDay = attDay === ad.dataset.aday ? null : ad.dataset.aday; const y0 = window.scrollY; render(); window.scrollTo(0, y0); return; }
+  const at = e.target.closest("[data-aterm]");
+  if (at) { const y = (data.years || [])[yearIdx]; if (y) attTerm[y.label] = at.dataset.aterm; attDay = null; render(); return; }
+  const pv = e.target.closest("[data-pview]");
+  if (pv) { planView = pv.dataset.pview; render(); return; }
   const yb = e.target.closest("[data-year]");
-  if (yb) { yearIdx += Number(yb.dataset.year); render(); return; }
+  if (yb) { yearIdx += Number(yb.dataset.year); attDay = null; render(); return; }
   const tb = e.target.closest("[data-term]");
   if (tb) { const y = (data.years || [])[yearIdx]; if (y) termSel[y.label] = tb.dataset.term; render(); return; }
   const tabBtn = e.target.closest("nav.tabs button");
