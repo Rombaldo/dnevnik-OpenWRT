@@ -15,7 +15,7 @@ APP=/root/dnevnik
 WWW=/tmp/dnevnik-www
 TOKEN_FILE=/root/.dnevnik-token
 TMP=/tmp/dnevnik-install
-[ -f "$APP/.source" ] && . "$APP/.source"
+# Репозиторий и версия не запоминаются: берётся имя из этого скрипта, если не задано REPO=... и REF=... при запуске
 REPO="${REPO:-Rombaldo/dnevnik-OpenWRT}"
 REF="${REF:-main}"
 
@@ -74,7 +74,6 @@ cp -r "$SRC/web" "$SRC/router" "$APP/"
 cp -f "$SRC/core.py" "$SRC/sync.py" "$SRC/VERSION" "$APP/"
 [ -f "$APP/config.json" ] || cp "$SRC/config.example.json" "$APP/config.json"
 chmod 755 "$APP"/router/*.sh "$APP"/router/*.cgi "$APP"/router/dnevnik.init
-printf 'REPO=%s\nREF=%s\n' "$REPO" "$REF" > "$APP/.source"
 chown -R root:root "$APP"
 
 # 4. Служба и расписание
