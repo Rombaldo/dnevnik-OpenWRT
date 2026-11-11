@@ -613,7 +613,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertEqual(page.eval_on_selector_all(".att-list .att-day", "e => e.length"), 3)             # ниже список дней с пропусками
         self.assertIn("Рус. язык, Математика", page.inner_text(".att-list"))
         self.assertTrue(page.eval_on_selector_all(".cal-cell.none", "els => els.length > 5 && els.every(e => e.tagName === 'SPAN')"))   # выходные не кнопки
-        self.assertGreater(page.eval_on_selector_all(".cal-cell.unk", "e => e.length"), 20)                # будни без пропусков
+        self.assertGreater(page.eval_on_selector_all(".cal-cell.ok", "e => e.length"), 20)                 # будни без пропусков: зелёные, как в этом году
         self.assertIn("не сообщает", page.inner_text("#main"))                                            # честная оговорка про прошлые годы
         self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376)
         self.assertEqual(errors, [])
@@ -907,19 +907,45 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIsNone(page.query_selector("[data-change-login]"))
         self.assertEqual(errors, [])
 
-    def test_past_period_calendar_has_no_green_fill_but_this_year_keeps_it(self):
+    def test_past_period_calendar_is_green_too_and_says_was_at_lessons(self):
         page, errors = self.open_attendance()
         ok_bg = page.evaluate("getComputedStyle(document.querySelector('.cal-cell.ok')).backgroundColor")
-        self.assertNotEqual(ok_bg, "rgba(0, 0, 0, 0)")                                          # в этом году зелёная заливка
-        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.legend .l-ok')).backgroundColor"), ok_bg)
+        self.assertNotEqual(ok_bg, "rgba(0, 0, 0, 0)")
+        self.assertIn("был на уроках", page.inner_text(".legend"))
         page.click('[data-year="1"]'); page.click('[data-aterm="1"]')
-        clear = "rgba(0, 0, 0, 0)"
-        self.assertGreater(page.eval_on_selector_all(".cal-cell.unk", "e => e.length"), 10)
-        self.assertEqual(page.eval_on_selector_all(".cal-cell.ok", "e => e.length"), 0)
-        self.assertEqual(page.evaluate("[...new Set([...document.querySelectorAll('.cal-cell.unk')].map(e => getComputedStyle(e).backgroundColor))]"), [clear])
-        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.legend .l-unk')).backgroundColor"), clear)
-        self.assertNotEqual(page.evaluate("getComputedStyle(document.querySelector('.cal-cell.ill')).backgroundColor"), clear)   # дни с пропусками по-прежнему цветные
+        self.assertGreater(page.eval_on_selector_all(".cal-cell.ok", "e => e.length"), 10)
+        self.assertEqual(page.evaluate("[...new Set([...document.querySelectorAll('.cal-cell.ok')].map(e => getComputedStyle(e).backgroundColor))]"), [ok_bg])
+        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.legend .l-ok')).backgroundColor"), ok_bg)
+        self.assertIn("был на уроках", page.inner_text(".legend"))
+        self.assertNotIn("пропусков нет", page.inner_text(".legend"))
+        page.click(".cal-cell.ok")
+        self.assertIn("Был на уроках", page.inner_text(".dayinfo"))
+        self.assertNotEqual(page.evaluate("getComputedStyle(document.querySelector('.cal-cell.ill')).backgroundColor"), ok_bg)   # дни с пропусками по-прежнему другого цвета
         self.assertEqual(errors, [])
+
+    def test_today_in_the_day_pager_is_blue_like_in_the_feed(self):
+        page, errors = self.open_ctx()
+        feed = page.evaluate("getComputedStyle(document.querySelector('.dtitle .rel')).color")
+        self.assertNotEqual(feed, page.evaluate("getComputedStyle(document.body).color"))
+        self.setting(page, "hwMode", "pages"); page.click("[data-settings-close]")
+        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.nav .ttl .rel')).color"), feed)
+        self.assertIn("Сегодня", page.inner_text(".nav .ttl .rel"))
+        page.click('nav.tabs button[data-tab="plan"]')
+        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.nav .ttl .rel')).color"), feed)
+        self.assertEqual(errors, [])
+
+    def test_header_is_compact_and_the_top_of_every_screen_is_the_same(self):
+        for w, h in ((375, 812), (1280, 800)):
+            page, errors = self.open_ctx(w, h, touch=False)
+            self.assertLess(page.evaluate("document.querySelector('header').getBoundingClientRect().height"), 100 if w < 700 else 80)
+            tops = {}
+            for tab in ("hw", "marks", "plan"):
+                page.click(f'nav.tabs button[data-tab="{tab}"]')
+                tops[tab] = page.evaluate("document.querySelector('main .grid > div > :first-child').getBoundingClientRect().top - document.querySelector('header').getBoundingClientRect().bottom")
+            self.assertEqual(len({round(v) for v in tops.values()}), 1, f"верх экранов разный на {w}px: {tops}")
+            self.assertGreaterEqual(min(tops.values()), 8)
+            page.close()
+            self.assertEqual(errors, [])
 
     def test_missed_days_are_written_next_to_missed_lessons(self):
         page, errors = self.open_years()
