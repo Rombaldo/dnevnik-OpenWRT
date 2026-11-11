@@ -3,7 +3,7 @@
 #
 # Первая установка (на роутере по SSH; токен GitHub только на чтение, см. README):
 #   wget -qO- --header="Authorization: Bearer $(cat /root/.dnevnik-token)" \
-#     https://raw.githubusercontent.com/Rombaldo/dnevnik-home/main/router/install.sh | sh
+#     https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh
 # Обновление до последней версии:   sh /root/dnevnik/router/install.sh
 # Конкретная версия:                REF=v0.5.0 sh /root/dnevnik/router/install.sh
 #
@@ -16,7 +16,7 @@ WWW=/tmp/dnevnik-www
 TOKEN_FILE=/root/.dnevnik-token
 TMP=/tmp/dnevnik-install
 [ -f "$APP/.source" ] && . "$APP/.source"
-REPO="${REPO:-Rombaldo/dnevnik-home}"
+REPO="${REPO:-Rombaldo/dnevnik-OpenWRT}"
 REF="${REF:-main}"
 
 say() { echo "==> $*"; }

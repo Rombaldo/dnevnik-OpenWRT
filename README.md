@@ -40,7 +40,7 @@ QR-код с адресом: `./dev.sh qr http://192.168.10.1:8765`.
 
 **Один раз создать токен** (в браузере, под вашим аккаунтом GitHub):
 Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
-- Repository access: **Only select repositories** → выбрать `dnevnik-home`.
+- Repository access: **Only select repositories** → выбрать `dnevnik-OpenWRT`.
 - Permissions → Repository permissions → **Contents: Read-only** (больше ничего).
 - Срок: например, 1 год. Скопировать токен (он показывается один раз).
 
@@ -49,7 +49,7 @@ Settings → Developer settings → Personal access tokens → **Fine-grained to
 **Установить на роутер** (на самом роутере по SSH, или с Mac одной командой `./dev.sh update`):
 ```
 wget -qO- --header="Authorization: Bearer $(cat /root/.dnevnik-token)" \
-  https://raw.githubusercontent.com/Rombaldo/dnevnik-home/main/router/install.sh | sh
+  https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh
 ```
 Скрипт сам доустановит Python-модули, скачает программу, включит службу и расписание. Вход (cookie) и данные не трогает.
 Обновить позже: `sh /root/dnevnik/router/install.sh` (или `./dev.sh update`). Конкретная версия: `REF=v0.5.0 sh /root/dnevnik/router/install.sh`.
