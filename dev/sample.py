@@ -2,10 +2,6 @@
 import random
 from datetime import date, datetime, timedelta
 
-# Крошечный настоящий PDF (одна пустая страница) для проверки открытия вложений
-SAMPLE_PDF = (b"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
-              b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
-
 SLOTS = [("8:00", "8:40"), ("8:50", "9:30"), ("9:40", "10:20"), ("10:40", "11:20"), ("11:30", "12:10"), ("12:20", "13:00")]
 WEEK = [  # расписание по дням недели (пн..пт)
     ["РоВ", "Математика", "Рус. язык", "История", "Литература", "Физкультура"],
@@ -44,8 +40,9 @@ def make_sample(today=None, seed=7):
             lessons.append({
                 "n": n, "start": s, "end": e, "subject": subj, "subjectId": f"s-{subj}", "groupId": "g1",
                 "theme": f"Тема урока ({subj})", "homework": rnd.choice(HOMEWORK.get(subj, ["-"])),
-                "files": [{"id": "1", "name": "Презентация. Географические исследования", "ext": "pdf", "size": 5149565, "ok": True},
-                          {"id": "2", "name": "Карточки к уроку", "ext": "docx", "size": 20480, "ok": False}]
+                "files": [{"id": "1", "name": "Презентация. Географические исследования", "ext": "pdf", "size": 5149565,
+                           "url": "https://b5.csdnevnik.ru/demo-1.pdf"},
+                          {"id": "2", "name": "Карточки к уроку", "ext": "docx", "size": 20480, "url": ""}]
                 if subj == "География" else [],
                 "canceled": False, "marks": marks,
             })

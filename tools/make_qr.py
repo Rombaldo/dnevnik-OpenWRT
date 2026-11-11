@@ -16,7 +16,7 @@ def lan_ip():
         s.close()
 
 
-url = sys.argv[1] if len(sys.argv) > 1 else f"http://{lan_ip()}:8765"
+url = sys.argv[1] if len(sys.argv) > 1 else "http://192.168.10.1:8765"   # страница живёт на роутере
 out = Path(__file__).resolve().parent.parent / "QR-для-телефона.svg"
 qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, box_size=14, border=3).save(str(out))
 print(f"{url} -> {out}")

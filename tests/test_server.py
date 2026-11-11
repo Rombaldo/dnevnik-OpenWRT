@@ -47,18 +47,13 @@ class ServerTests(unittest.TestCase):
                   "/session.json", "/../config.json", "/../fetcher.py"]:
             self.assertEqual(self.get(p)[0], 404, p)
 
-    def test_attachment_is_served_with_name(self):
-        req = urllib.request.Request(self.base + "/files/1.pdf?name=" + urllib.parse.quote("ГЕО Карта.pdf"))
+    def test_refresh_endpoint(self):
+        req = urllib.request.Request(self.base + "/cgi-bin/refresh", method="POST")
         with urllib.request.urlopen(req, timeout=10) as r:
             self.assertEqual(r.status, 200)
-            self.assertEqual(r.headers["Content-Type"], "application/pdf")
-            self.assertEqual(r.headers["X-Content-Type-Options"], "nosniff")
-            self.assertIn(urllib.parse.quote("ГЕО Карта.pdf"), r.headers["Content-Disposition"])
-            self.assertTrue(r.read().startswith(b"%PDF"))
 
-    def test_attachment_bad_requests(self):
-        for p in ["/files/999.pdf", "/files/1.html", "/files/1.exe", "/files/abc.pdf", "/files/../server.py",
-                  "/files/1.pdf/../../server.py", "/files/.pdf"]:
+    def test_files_are_not_stored_or_served(self):
+        for p in ["/files/1.pdf", "/data/files/1.pdf"]:
             self.assertEqual(self.get(p)[0], 404, p)
 
     def test_offline_copy_has_inline_data(self):

@@ -112,7 +112,9 @@ class UiSmokeTests(unittest.TestCase):
         page, errors = self.open(375, 812)
         link = page.query_selector("a.file")
         self.assertIsNotNone(link, "ссылка на вложение не нарисована")
-        self.assertIn("files/1.pdf", link.get_attribute("href"))
+        self.assertEqual(link.get_attribute("href"), "https://b5.csdnevnik.ru/demo-1.pdf")   # прямая ссылка на файл
+        self.assertEqual(link.get_attribute("target"), "_blank")
+        self.assertIn("noopener", link.get_attribute("rel"))
         self.assertIn("Презентация", link.inner_text())
         self.assertIsNotNone(page.query_selector(".file.off"), "нескачанный файл должен показываться без ссылки")
         # раскрытие урока по нажатию на заголовок

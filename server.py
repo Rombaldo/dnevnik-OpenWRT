@@ -1,10 +1,11 @@
-"""Домашний сервер: раз в N минут обновляет дневник и отдаёт страницу по Wi-Fi.
+"""Сервер для Mac и для разработки: раз в N минут обновляет дневник и отдаёт страницу по Wi-Fi.
+(На роутере то же делают cron и встроенный веб-сервер роутера, см. router/.)
 
-Запуск:  .venv/bin/python server.py
+Запуск:  .venv/bin/python server.py          (настоящие данные)
+         .venv/bin/python server.py --demo   (выдуманные данные, вход не нужен)
 Открыть: http://<адрес-Mac>:8765  (адрес печатается при запуске)
 """
 import json
-import re
 import socket
 import sys
 import threading
@@ -13,7 +14,6 @@ import traceback
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
 
 import fetcher
 
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 DEMO = "--demo" in sys.argv   # выдуманные данные, без входа и без обращений к сайту
 PORT = 8766 if DEMO else 8765
-VERSION = (Path(__file__).resolve().parent / "VERSION").read_text().strip()
+VERSION = (ROOT / "VERSION").read_text().strip()
 INTERVAL = 20 * 60          # обновление раз в 20 минут
 NIGHT = (23, 6)             # ночью не ходим на сайт
 MIN_MANUAL_GAP = 120        # кнопка «Обновить» не чаще раза в 2 минуты
@@ -67,13 +67,12 @@ def read_data():
         d["config"] = {"name": "Тест"}
         d["version"] = VERSION
         return d
-    d = json.loads(fetcher.OUT.read_text()) if fetcher.OUT.exists() else {"updatedAt": None, "days": []}
-    d["status"] = {"needLogin": state["needLogin"], "error": state["error"], "syncing": state["syncing"]}
-    cfg = ROOT / "config.json"   # необязательные настройки: {"name": "Катя"}
     try:
-        d["config"] = json.loads(cfg.read_text()) if cfg.exists() else {}
-    except Exception:
-        d["config"] = {}
+        d = json.loads(fetcher.OUT.read_text())
+    except (OSError, ValueError):
+        d = {"updatedAt": None, "days": []}
+    d["status"] = {"needLogin": state["needLogin"], "error": state["error"], "syncing": state["syncing"]}
+    d.setdefault("config", {})
     d["version"] = VERSION
     return d
 
@@ -81,17 +80,6 @@ def read_data():
 MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
         ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png"}
-
-
-FILE_RE = re.compile(r"/files/(\d+)\.([a-z0-9]+)")
-FILE_MIME = {
-    "pdf": "application/pdf", "txt": "text/plain; charset=utf-8", "rtf": "application/rtf",
-    "doc": "application/msword", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "xls": "application/vnd.ms-excel", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "ppt": "application/vnd.ms-powerpoint", "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "odt": "application/vnd.oasis.opendocument.text",
-    "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp",
-}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -111,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path == "/api/refresh":
+        if self.path == "/cgi-bin/refresh":   # тот же адрес, что и на роутере
             if time.time() - state["lastTry"] >= MIN_MANUAL_GAP and not state["needLogin"]:
                 wake.set()
             return self.send(200, json.dumps({"ok": True}), MIME[".json"])
@@ -127,26 +115,6 @@ class Handler(BaseHTTPRequestHandler):
             html = html.replace("/*INLINE_DATA*/null", blob)
             return self.send(200, html, MIME[".html"],
                              {"Content-Disposition": 'attachment; filename="dnevnik-offline.html"'})
-        m = FILE_RE.fullmatch(path)
-        if m:   # вложения к домашке: только файлы, которые сами скачали, и только известных типов
-            fid, ext = m.group(1), m.group(2)
-            if ext not in FILE_MIME:
-                return self.send(404, "не найдено", "text/plain; charset=utf-8")
-            if DEMO:
-                from dev.sample import SAMPLE_PDF
-                body = SAMPLE_PDF if (fid, ext) == ("1", "pdf") else None
-            else:
-                fp = fetcher.FILES / f"{fid}.{ext}"
-                body = fp.read_bytes() if fp.is_file() else None
-            if body is None:
-                return self.send(404, "не найдено", "text/plain; charset=utf-8")
-            raw = parse_qs(urlparse(self.path).query).get("name", [f"{fid}.{ext}"])[0]
-            name = re.sub(r'[\x00-\x1f"\\/:*?<>|]+', " ", raw).strip()[:120] or f"{fid}.{ext}"
-            if not name.lower().endswith("." + ext):
-                name += "." + ext
-            return self.send(200, body, FILE_MIME[ext], {
-                "X-Content-Type-Options": "nosniff",
-                "Content-Disposition": f"inline; filename*=UTF-8''{quote(name)}"})
         if path == "/":
             path = "/index.html"
         f = (WEB / path.lstrip("/")).resolve()

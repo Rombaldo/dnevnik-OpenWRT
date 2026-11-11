@@ -359,14 +359,15 @@ const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1).replace(".", 
 let showPast = false;
 
 function fileChips(l) {
+  // Файлы у нас не хранятся: открываются по ссылке прямо с сервера Дневник.ру (нужен интернет)
   return (l.files || []).map((f) => {
     const title = `${f.name}.${f.ext}`;
-    if (f.ok && !window.__DATA__)
-      return `<a class="file" href="files/${esc(f.id)}.${esc(f.ext)}?name=${encodeURIComponent(title)}" target="_blank" rel="noopener">
+    if (f.url)
+      return `<a class="file" href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">
         <span class="fic">${f.ext === "pdf" ? "📄" : /^(jpe?g|png|gif|webp)$/.test(f.ext) ? "🖼️" : "📎"}</span>
         <span class="fn">${esc(title)}</span><span class="fs">${fmtSize(f.size)} · открыть</span></a>`;
     return `<div class="file off"><span class="fic">📎</span><span class="fn">${esc(title)}</span>
-      <span class="fs">${window.__DATA__ ? "открывается дома по Wi-Fi" : "пока не скачан, смотри на сайте"}</span></div>`;
+      <span class="fs">ссылка недоступна, смотри на сайте</span></div>`;
   }).join("");
 }
 
@@ -489,7 +490,7 @@ document.addEventListener("click", (e) => {
 
 $("#refresh").addEventListener("click", async () => {
   const b = $("#refresh"); b.disabled = true; $("#ricon").className = "spin";
-  try { await fetch("api/refresh", { method: "POST" }); } catch {}
+  try { await fetch("cgi-bin/refresh", { method: "POST" }); } catch {}
   setTimeout(async () => { await load(); b.disabled = false; $("#ricon").className = ""; }, 15000);
 });
 

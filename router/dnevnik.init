@@ -1,0 +1,20 @@
+#!/bin/sh /etc/rc.common
+# Служба «Мой дневник»: отдельный веб-сервер на порту 8765 (веб-интерфейс роутера на порту 80 не трогаем).
+START=99
+USE_PROCD=1
+APP=/root/dnevnik
+WWW=/tmp/dnevnik-www
+
+start_service() {
+    mkdir -p "$WWW/cgi-bin"
+    cp -f "$APP"/web/* "$WWW"/
+    cp -f "$APP/router/refresh.cgi" "$WWW/cgi-bin/refresh"
+    chmod 755 "$WWW/cgi-bin/refresh"
+    # сразу показываем последние сохранённые данные, потом обновляемся с сайта
+    python3 "$APP/sync.py" --rebuild --data "$APP/data" --out "$WWW/data.json" >/dev/null 2>&1
+    ( sleep 25; "$APP/router/sync.sh" ) >/dev/null 2>&1 &
+    procd_open_instance
+    procd_set_param command /usr/sbin/uhttpd -f -h "$WWW" -p 0.0.0.0:8765 -x /cgi-bin -t 60 -T 30 -N 20
+    procd_set_param respawn
+    procd_close_instance
+}
