@@ -5,6 +5,13 @@
 #   wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh
 # (если репозиторий приватный, нужен токен GitHub только на чтение: файл /root/.dnevnik-token и ключ
 #  --header="Authorization: Bearer $(cat /root/.dnevnik-token)" в wget)
+#
+# Выбор: с пунктом «Службы → Дневник» в веб-интерфейсе LuCI или без него.
+#   без LuCI (по умолчанию):  wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh
+#   с LuCI:                   wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh -s -- --luci
+#   убрать страницу LuCI:     ... | sh -s -- --no-luci
+# Если страница LuCI уже стоит, при обновлении без ключей она тоже обновляется.
+#
 # Обновление до последней версии:   sh /root/dnevnik/router/install.sh
 # Конкретная версия:                REF=v0.5.0 sh /root/dnevnik/router/install.sh
 #
@@ -21,12 +28,24 @@ TMP=/tmp/dnevnik-install
 REPO="${REPO:-Rombaldo/dnevnik-OpenWRT}"
 REF="${REF:-main}"
 
+LUCI=auto
+for arg in "$@"; do
+    case "$arg" in
+        --luci) LUCI=1 ;;
+        --no-luci) LUCI=0 ;;
+        *) echo "ОШИБКА: неизвестный ключ $arg (бывают --luci и --no-luci)" >&2; exit 2 ;;
+    esac
+done
+
 say() { echo "==> $*"; }
 die() { echo "ОШИБКА: $*" >&2; rm -rf "$TMP"; exit 1; }
 
 [ "$(id -u)" = "0" ] || die "запускайте от root"
 [ -f /etc/openwrt_release ] || die "это не OpenWrt"
 OLD=$(cat "$APP/VERSION" 2>/dev/null || echo "нет")
+if [ "$LUCI" = "auto" ]; then   # без ключей: раз страница LuCI уже стоит, она обновляется вместе с программой
+    if [ -f /www/luci-static/resources/view/dnevnik/status.js ]; then LUCI=1; else LUCI=0; fi
+fi
 
 # 1. Python и нужные модули
 say "Проверяю Python…"
@@ -70,16 +89,23 @@ SRC=$(find "$TMP/x" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 for f in core.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/setname.sh; do
     [ -f "$SRC/$f" ] || die "в архиве нет файла $f"
 done
+if [ "$LUCI" = "1" ]; then
+    for f in luci/rpcd/luci.dnevnik luci/menu.d/luci-app-dnevnik.json luci/acl.d/luci-app-dnevnik.json luci/htdocs/view/dnevnik/status.js router/luci.sh; do
+        [ -f "$SRC/$f" ] || die "в архиве нет файла $f (для страницы LuCI нужна версия 0.12.0 или новее)"
+    done
+fi
 NEW=$(cat "$SRC/VERSION")
 
 # 3. Раскладываю (data/ и config.json не трогаю)
 say "Устанавливаю версию $NEW (была: $OLD)…"
 mkdir -p "$APP/data"; chmod 700 "$APP/data"
-rm -rf "$APP/web" "$APP/router"
+rm -rf "$APP/web" "$APP/router" "$APP/luci"
 cp -r "$SRC/web" "$SRC/router" "$APP/"
+[ -d "$SRC/luci" ] && cp -r "$SRC/luci" "$APP/"
 cp -f "$SRC/core.py" "$SRC/sync.py" "$SRC/VERSION" "$APP/"
 [ -f "$APP/config.json" ] || cp "$SRC/config.example.json" "$APP/config.json"
 chmod 755 "$APP"/router/*.sh "$APP"/router/*.cgi "$APP"/router/dnevnik.init
+[ -f "$APP/luci/rpcd/luci.dnevnik" ] && chmod 755 "$APP/luci/rpcd/luci.dnevnik"
 rm -f "$APP/.source"   # старые версии установщика запоминали имя репозитория
 chown -R root:root "$APP"
 
@@ -92,6 +118,16 @@ grep -q "dnevnik/router/sync.sh" /etc/crontabs/root 2>/dev/null || echo "*/20 6-
 /etc/init.d/cron restart >/dev/null 2>&1 || true
 /etc/init.d/dnevnik restart 2>&1 | grep -v "Not found" || true
 rm -rf "$TMP"
+
+# 4а. Страница в LuCI (по выбору)
+LUCI_MSG=""
+if [ "$LUCI" = "1" ]; then
+    say "Ставлю страницу «Службы → Дневник» в LuCI…"
+    LUCI_MSG=$(sh "$APP/router/luci.sh" install 2>&1) || true
+elif [ -f /www/luci-static/resources/view/dnevnik/status.js ]; then
+    say "Убираю страницу LuCI…"
+    sh "$APP/router/luci.sh" remove >/dev/null 2>&1 || true
+fi
 
 # 5. Проверяю, что страница действительно открывается
 OK=0
@@ -110,6 +146,7 @@ for i in 1 2 3 4 5; do
 done
 
 say "Готово: версия $NEW."
+[ -n "$LUCI_MSG" ] && echo "$LUCI_MSG"
 if [ ! -s "$APP/data/credentials.json" ] && [ ! -s "$APP/data/session.json" ]; then
     echo "    Осталось один раз ввести логин и пароль от Дневник.ру: откройте страницу ниже на телефоне и заполните форму."
 fi

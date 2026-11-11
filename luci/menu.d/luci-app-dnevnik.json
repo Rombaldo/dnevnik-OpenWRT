@@ -1,0 +1,13 @@
+{
+	"admin/services/dnevnik": {
+		"title": "Дневник",
+		"order": 70,
+		"action": {
+			"type": "view",
+			"path": "dnevnik/status"
+		},
+		"depends": {
+			"acl": [ "luci-app-dnevnik" ]
+		}
+	}
+}

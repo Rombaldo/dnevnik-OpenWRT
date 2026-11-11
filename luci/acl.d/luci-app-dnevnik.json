@@ -1,0 +1,15 @@
+{
+	"luci-app-dnevnik": {
+		"description": "Дневник: состояние, обновление, настройки",
+		"read": {
+			"ubus": {
+				"luci.dnevnik": [ "status", "log", "check_update" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.dnevnik": [ "refresh", "update", "set_config", "logout_begin", "logout_confirm", "logout_restore" ]
+			}
+		}
+	}
+}

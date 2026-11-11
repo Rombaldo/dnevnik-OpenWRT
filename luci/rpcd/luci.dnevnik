@@ -1,0 +1,285 @@
+#!/usr/bin/python3
+"""Серверная часть страницы «Службы → Дневник» в LuCI (rpcd-плагин, ubus-объект luci.dnevnik).
+Показывает состояние, обновляет данные, меняет расписание и имя, проверяет и ставит новую версию, делает выход из аккаунта.
+Работает только когда страницу открыли в LuCI: сам ничего не запускает и в памяти не живёт."""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime, timedelta
+
+HOME = os.environ.get("DNEVNIK_HOME", "/root/dnevnik")           # другие значения нужны только тестам
+WWW = os.environ.get("DNEVNIK_WWW", "/tmp/dnevnik-www")
+TMPD = os.environ.get("DNEVNIK_TMP", "/tmp")
+CRON = os.environ.get("DNEVNIK_CRON", "/etc/crontabs/root")
+REPO = "Rombaldo/dnevnik-OpenWRT"
+VERSION_URL = os.environ.get("DNEVNIK_VERSION_URL", f"https://raw.githubusercontent.com/{REPO}/main/VERSION")
+DATA = os.path.join(HOME, "data")
+OUT = os.path.join(WWW, "data.json")
+SYNC_LOG, UPDATE_LOG = os.path.join(TMPD, "dnevnik-sync.log"), os.path.join(TMPD, "dnevnik-update.log")
+SYNC_LOCK, UPDATE_PID = os.path.join(TMPD, "dnevnik-sync.lock"), os.path.join(TMPD, "dnevnik-update.pid")
+LAST_REFRESH = os.path.join(TMPD, "dnevnik-lastrefresh")
+EVERY = (5, 10, 15, 20, 30, 60)
+MIN_REFRESH_GAP = 120
+CRON_MARK = "dnevnik/router/sync.sh"
+
+sys.path.insert(0, HOME)
+
+
+def read_text(path, default=""):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return default
+
+
+def alive(pid_or_file):
+    try:
+        pid = int(read_text(pid_or_file).strip()) if isinstance(pid_or_file, str) else int(pid_or_file)
+        os.kill(pid, 0)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def tail(path, lines=40, limit=6000):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - limit))
+            data = f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    return "\n".join(data.splitlines()[-lines:])
+
+
+def uci(path):
+    try:
+        return subprocess.run(["uci", "-q", "get", path], capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+# ---------- расписание в cron ----------
+def read_schedule():
+    """(каждые N минут, с какого часа, до какого часа не включая). Если строки нет или она необычная, то 20, 6, 23."""
+    for line in read_text(CRON).splitlines():
+        if CRON_MARK in line and not line.lstrip().startswith("#"):
+            m = re.match(r"^\s*(\*/(\d+)|0)\s+(\d+)-(\d+)\s+\*\s+\*\s+\*\s", line)
+            if m:
+                every = int(m.group(2)) if m.group(2) else 60
+                return every, int(m.group(3)), int(m.group(4)) + 1
+    return 20, 6, 23
+
+
+def next_run_in(every, start, end, now=None):
+    """Через сколько секунд cron запустит следующее обновление."""
+    now = now or datetime.now()
+    minutes = [0] if every >= 60 else list(range(0, 60, every))
+    for day in (0, 1):
+        for hour in range(start, end):
+            for minute in minutes:
+                t = (now + timedelta(days=day)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if t > now:
+                    return int((t - now).total_seconds())
+    return None
+
+
+def write_schedule(every, start, end):
+    line = f"{'0' if every >= 60 else f'*/{every}'} {start}-{end - 1} * * * /root/dnevnik/router/sync.sh\n"
+    keep = [l for l in read_text(CRON).splitlines(keepends=True) if CRON_MARK not in l]
+    if keep and not keep[-1].endswith("\n"):
+        keep[-1] += "\n"
+    tmp = CRON + ".dnevnik-new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("".join(keep) + line)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CRON)
+    if not os.environ.get("DNEVNIK_NO_SERVICES"):
+        subprocess.run(["/etc/init.d/cron", "restart"], capture_output=True, timeout=20)
+
+
+# ---------- методы ----------
+def status(_):
+    page = {}
+    try:
+        page = json.loads(read_text(OUT) or "{}")
+    except ValueError:
+        pass
+    st, student = page.get("status") or {}, page.get("student") or {}
+    every, start, end = read_schedule()
+    domain = os.environ.get("DNEVNIK_DOMAIN") or uci("dhcp.@dnsmasq[0].domain") or "lan"
+    ip = (uci("network.lan.ipaddr") or "").split("/")[0]
+    try:
+        import core
+        can_restore = bool(core.backup_available(DATA))
+    except Exception:
+        can_restore = False
+    try:
+        name = (json.loads(read_text(os.path.join(HOME, "config.json")) or "{}").get("name") or "")
+    except ValueError:
+        name = ""
+    return {
+        "version": read_text(os.path.join(HOME, "VERSION")).strip(),
+        "updatedAt": page.get("updatedAt"), "days": len(page.get("days") or []),
+        "needLogin": bool(st.get("needLogin")), "error": st.get("error"),
+        "student": student.get("name") or "", "school": student.get("school") or "",
+        "syncing": alive(SYNC_LOCK), "updating": alive(UPDATE_PID), "canRestore": can_restore,
+        "every": every, "from": start, "to": end, "name": name,
+        "nextIn": next_run_in(every, start, end), "now": int(time.time()),
+        "url": f"http://dnevnik.{domain}", "urlIp": f"http://{ip}:8765" if ip else "",
+    }
+
+
+def log(args):
+    which = args.get("which")
+    return {"text": tail(UPDATE_LOG if which == "update" else SYNC_LOG)}
+
+
+def refresh(_):
+    now = time.time()
+    try:
+        last = float(read_text(LAST_REFRESH, "0") or 0)
+    except ValueError:
+        last = 0
+    if alive(SYNC_LOCK):
+        return {"ok": True, "started": False, "message": "Обновление уже идёт."}
+    if now - last < MIN_REFRESH_GAP:
+        return {"ok": True, "started": False, "message": "Обновляли только что. Подождите пару минут: чаще сайт не любит."}
+    with open(LAST_REFRESH, "w") as f:
+        f.write(str(int(now)))
+    subprocess.Popen([os.path.join(HOME, "router", "sync.sh")], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+    return {"ok": True, "started": True, "message": "Обновление запущено. Данные появятся примерно через минуту."}
+
+
+def vtuple(v):
+    return tuple(int(x) for x in v.split("."))
+
+
+def check_update(_):
+    cur = read_text(os.path.join(HOME, "VERSION")).strip()
+    try:
+        with urllib.request.urlopen(VERSION_URL, timeout=10) as r:
+            latest = r.read(64).decode("utf-8", "replace").strip()
+    except Exception:
+        return {"ok": False, "current": cur, "message": "Не удалось связаться с GitHub. Проверьте интернет на роутере."}
+    if not re.fullmatch(r"\d+\.\d+\.\d+", latest or ""):
+        return {"ok": False, "current": cur, "message": "GitHub ответил непонятно. Попробуйте позже."}
+    try:
+        newer = vtuple(latest) > vtuple(cur)
+    except ValueError:
+        newer = latest != cur
+    return {"ok": True, "current": cur, "latest": latest, "newer": newer}
+
+
+def update(_):
+    if alive(UPDATE_PID):
+        return {"ok": False, "message": "Обновление программы уже идёт."}
+    script = os.path.join(HOME, "router", "install.sh")
+    if not os.path.isfile(script):
+        return {"ok": False, "message": "Не найден установщик. Выполните команду установки по SSH."}
+    out = open(UPDATE_LOG, "w")
+    out.write(f"--- {datetime.now():%F %T} обновление программы\n")
+    out.flush()
+    proc = subprocess.Popen(["sh", script, "--luci"], stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    with open(UPDATE_PID, "w") as f:
+        f.write(str(proc.pid))
+    return {"ok": True, "message": "Обновление программы запущено. Ход виден в журнале ниже."}
+
+
+def set_config(args):
+    try:
+        every, start, end = int(args.get("every")), int(args.get("from")), int(args.get("to"))
+    except (TypeError, ValueError):
+        return {"ok": False, "message": "Числа заданы неверно."}
+    if every not in EVERY:
+        return {"ok": False, "message": "Частота может быть: " + ", ".join(map(str, EVERY)) + " минут."}
+    if not (0 <= start <= 23 and start < end <= 24):
+        return {"ok": False, "message": "Часы заданы неверно: «с» должно быть раньше «до»."}
+    name = re.sub(r"[\x00-\x1f\x7f<>&\"]", "", str(args.get("name") or "")).strip()[:40]
+    write_schedule(every, start, end)
+    cfg_path = os.path.join(HOME, "config.json")
+    try:
+        cfg = json.loads(read_text(cfg_path) or "{}")
+        assert isinstance(cfg, dict)
+    except (ValueError, AssertionError):
+        cfg = {}
+    cfg["name"] = name
+    tmp = cfg_path + ".new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, cfg_path)
+    os.chmod(cfg_path, 0o644)
+    try:
+        import core
+        core.rebuild(DATA, OUT, config_path=cfg_path, version_path=os.path.join(HOME, "VERSION"))
+    except Exception:
+        pass
+    return {"ok": True, "message": "Сохранено."}
+
+
+def rebuild_page():
+    try:
+        import core
+        core.rebuild(DATA, OUT, config_path=os.path.join(HOME, "config.json"), version_path=os.path.join(HOME, "VERSION"))
+    except Exception:
+        pass
+
+
+def logout_begin(_):
+    import core
+    return {"ok": True, "token": core.begin_logout(DATA)}
+
+
+def logout_confirm(args):
+    import core
+    ok, message = core.confirm_logout(DATA, str(args.get("token") or ""))
+    if ok:
+        rebuild_page()
+    return {"ok": ok, "message": message}
+
+
+def logout_restore(_):
+    import core
+    ok, message = core.restore_logout(DATA)
+    if ok:
+        rebuild_page()
+        subprocess.Popen([os.path.join(HOME, "router", "sync.sh")], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    return {"ok": ok, "message": message}
+
+
+METHODS = {
+    "status": (status, {}), "log": (log, {"which": ""}), "refresh": (refresh, {}), "check_update": (check_update, {}),
+    "update": (update, {}), "set_config": (set_config, {"every": 0, "from": 0, "to": 0, "name": ""}),
+    "logout_begin": (logout_begin, {}), "logout_confirm": (logout_confirm, {"token": ""}), "logout_restore": (logout_restore, {}),
+}
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[1] == "list":
+        print(json.dumps({k: v[1] for k, v in METHODS.items()}))
+        return 0
+    if len(argv) >= 3 and argv[1] == "call" and argv[2] in METHODS:
+        try:
+            args = json.loads(sys.stdin.read() or "{}")
+            if not isinstance(args, dict):
+                args = {}
+        except ValueError:
+            args = {}
+        try:
+            result = METHODS[argv[2]][0](args)
+        except Exception as e:  # страница получит понятный ответ, а не пустоту
+            result = {"ok": False, "message": f"Ошибка: {type(e).__name__}: {e}"}
+        sys.stdout.write(json.dumps(result, ensure_ascii=False))
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
