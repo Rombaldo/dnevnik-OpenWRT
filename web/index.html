@@ -127,6 +127,11 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
   /* ---- расписание ---- */
+  .plan-body { touch-action: pan-y; min-height: 55vh; }
+  .plan-body.from-right { animation: fromRight .22s ease-out; } .plan-body.from-left { animation: fromLeft .22s ease-out; }
+  @keyframes fromRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+  @keyframes fromLeft { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: none; } }
+  .swipehint { text-align: center; color: var(--muted); font-size: 13px; margin: 10px 0 0; }
   .nav { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
   .nav button { background: var(--card); border: 0; border-radius: 16px; min-width: 60px; min-height: 56px; font-size: 26px; box-shadow: var(--shadow); }
   .nav button:disabled { opacity: .35; }
@@ -313,7 +318,7 @@ function render() {
 function schoolDays() { return data.days.filter((d) => d.lessons.some((l) => !l.canceled)); }
 function focusDate() {
   const today = todayIso(), days = schoolDays();
-  if (new Date().getHours() < 14 && days.some((d) => d.date === today)) return today;
+  if (days.some((d) => d.date === today)) return today;   // сегодняшний день всегда виден, если сегодня есть уроки
   return days.find((d) => d.date > today)?.date ?? null;
 }
 const cls = (v) => ({ 5: "m5", 4: "m4", 3: "m3", 2: "m2", 1: "m1" }[String(v).trim()] ?? "");
@@ -436,9 +441,32 @@ function viewPlan() {
   const out = `<div class="nav"><button data-nav="-1" ${i === 0 ? "disabled" : ""} aria-label="Раньше">‹</button>
     <div class="ttl">${r ? r + ", " : ""}${esc(WD[day.weekday] ?? "")}<small>${dayName(day.date)}</small></div>
     <button data-nav="1" ${i === dates.length - 1 ? "disabled" : ""} aria-label="Позже">›</button></div>
-    ${dayScheduleCard(planDate, "")}`;
+    <div class="plan-body ${planAnim}" id="plan-body">${dayScheduleCard(planDate, "")}</div>
+    <div class="swipehint">Листай дни пальцем влево и вправо ↔</div>`;
+  planAnim = "";
   return [out, ""];
 }
+
+// Переключение дня в расписании: стрелками или свайпом
+let planAnim = "";
+function shiftPlan(delta) {
+  const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
+  const next = Math.max(0, Math.min(dates.length - 1, dates.indexOf(planDate) + delta));
+  if (dates[next] === planDate) return;
+  planDate = dates[next];
+  planAnim = delta > 0 ? "from-right" : "from-left";
+  render();
+}
+let touch = null;
+document.addEventListener("touchstart", (e) => {
+  touch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null;
+}, { passive: true });
+document.addEventListener("touchend", (e) => {
+  if (!touch || tab !== "plan" || !data?.days?.length) return;
+  const t = e.changedTouches[0], dx = t.clientX - touch.x, dy = t.clientY - touch.y, fast = Date.now() - touch.t < 900;
+  touch = null;
+  if (fast && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) shiftPlan(dx < 0 ? 1 : -1);
+}, { passive: true });
 
 // ---------- События ----------
 document.addEventListener("click", (e) => {
@@ -456,11 +484,7 @@ document.addEventListener("click", (e) => {
   const head = e.target.closest("[data-toggle]");
   if (head) { head.parentElement.classList.toggle("open"); return; }
   const nav = e.target.closest("[data-nav]");
-  if (nav) {
-    const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
-    planDate = dates[Math.max(0, Math.min(dates.length - 1, dates.indexOf(planDate) + Number(nav.dataset.nav)))];
-    render();
-  }
+  if (nav) shiftPlan(Number(nav.dataset.nav));
 });
 
 $("#refresh").addEventListener("click", async () => {
