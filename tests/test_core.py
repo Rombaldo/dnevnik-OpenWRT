@@ -100,8 +100,14 @@ FINAL_JSON = {"subjects": [
                                        {"type": "Year", "periodNumber": 0, "marks": [{"value": "4"}, {"value": "5"}]}]}]}
 TERM_JSON = {"subjects": [
     {"name": "Рус. язык", "average": {"value": "3,5"}, "works": [
-        {"date": 200, "marks": [{"value": "3"}]}, {"date": 100, "marks": [{"value": "4"}, {"value": "2"}]}]},
-    {"name": "Пустой предмет", "average": None, "works": []}]}
+        {"date": 200, "marks": [{"value": "3"}]}, {"date": 100, "marks": [{"value": "4"}, {"value": "2"}]}],
+     "totalLessonNumber": 40, "countAbsence": 3, "countIllAbsence": 2, "countBeingLate": 1, "lessonLogEntries": [
+         {"id": "e1", "lessonId": "l1", "value": "Б", "fullName": "Пропуск по болезни", "date": "1759708800", "lessonNumber": 2},
+         {"id": "e2", "lessonId": "l2", "value": "Б", "fullName": "Пропуск по болезни", "date": "1759708800", "lessonNumber": 3},
+         {"id": "e3", "lessonId": "l3", "value": "Н", "fullName": "Пропуск без уважительной причины", "date": "1760918400", "lessonNumber": 1},
+         {"id": "e4", "lessonId": "l4", "value": "О", "fullName": "Опоздание", "date": "1761004800", "lessonNumber": 1}]},
+    {"name": "Пустой предмет", "average": None, "works": [], "totalLessonNumber": 60, "lessonLogEntries": [
+         {"id": "e1x", "lessonId": "l1", "value": "Б", "fullName": "Пропуск по болезни", "date": "1759708800", "lessonNumber": 2}]}]}
 
 
 class FakeSite(http.server.BaseHTTPRequestHandler):
@@ -497,6 +503,48 @@ class StudyInfoTests(unittest.TestCase):
         self.assertEqual([s["name"] for s in term["subjects"]], ["Рус. язык"])
         self.assertEqual(term["subjects"][0]["marks"], ["4", "2", "3"])
         self.assertEqual(term["subjects"][0]["average"], "3,5")
+
+    # ---- посещаемость
+    def test_attendance_totals_days_and_percent(self):
+        a = core.parse_attendance(TERM_JSON)
+        self.assertEqual((a["total"], a["absent"], a["ill"], a["late"], a["percent"]), (100, 3, 2, 1, 97))
+        self.assertEqual([(d["date"], d["kind"], d["lessons"]) for d in a["days"]],
+                         [("2025-10-06", "ill", [2, 3]), ("2025-10-20", "absent", [1]), ("2025-10-21", "late", [1])])
+        self.assertEqual(a["days"][0]["name"], "Пропуск по болезни")                  # причину берём с сайта как есть
+
+    def test_same_lesson_is_not_counted_twice(self):
+        entry = {"id": "1", "lessonId": "same", "fullName": "Пропуск по болезни", "date": "1759708800", "lessonNumber": 2}
+        data = {"subjects": [{"name": "a", "totalLessonNumber": 10, "lessonLogEntries": [entry]},
+                             {"name": "b", "totalLessonNumber": 10, "lessonLogEntries": [dict(entry, id="2")]}]}   # один урок записан у двух предметов
+        a = core.parse_attendance(data)                                                # счётчиков нет, считаем по журналу
+        self.assertEqual((a["absent"], a["ill"]), (1, 1))
+
+    def test_period_that_has_not_started_has_no_attendance(self):
+        self.assertIsNone(core.parse_attendance({"subjects": [{"name": "x", "totalLessonNumber": 0}]}))
+        self.assertIsNone(core.parse_attendance({"subjects": []}))
+
+    def test_attendance_without_absences_is_100_percent(self):
+        a = core.parse_attendance({"subjects": [{"name": "x", "totalLessonNumber": 50, "lessonLogEntries": []}]})
+        self.assertEqual((a["absent"], a["late"], a["percent"], a["days"]), (0, 0, 100, []))
+
+    def test_counters_are_rebuilt_from_the_log_if_site_sent_none(self):
+        data = {"subjects": [{"name": "x", "totalLessonNumber": 10, "lessonLogEntries": [
+            {"id": "1", "lessonId": "1", "fullName": "Пропуск по болезни", "date": "1759708800", "lessonNumber": 1},
+            {"id": "2", "lessonId": "2", "fullName": "Опоздание", "date": "1759795200", "lessonNumber": 2}]}]}
+        a = core.parse_attendance(data)
+        self.assertEqual((a["absent"], a["ill"], a["late"], a["percent"]), (1, 1, 1, 90))
+
+    def test_attendance_is_in_fetched_terms(self):
+        _, years = core.fetch_study_info(self.client, self.IDS)
+        self.assertEqual(years[1]["terms"][0]["attendance"]["absent"], 3)
+
+    def test_years_saved_in_the_old_format_are_refetched_once(self):
+        _, years = core.fetch_study_info(self.client, self.IDS, now=1_000_000)
+        old = [dict(y) for y in years]
+        old[1].pop("format")                                                           # как сохраняли до появления посещаемости
+        FakeSite.paths = []
+        core.fetch_study_info(self.client, self.IDS, old_years=old, now=1_000_000 + 3600)
+        self.assertTrue([p for p in FakeSite.paths if "groupId=4001" in p])            # прошлый год запрошен заново
 
     def test_all_years_are_fetched(self):
         student, years = core.fetch_study_info(self.client, self.IDS)

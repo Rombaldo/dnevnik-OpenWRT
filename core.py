@@ -294,6 +294,40 @@ def parse_final(data, group):
     return rows, n
 
 
+def parse_attendance(data):
+    """Посещаемость за период: сколько уроков пропущено (по болезни, по другим причинам), опозданий и по каким дням."""
+    subjects = data.get("subjects") or []
+    total = sum(int(sub.get("totalLessonNumber") or 0) for sub in subjects)
+    if not total:
+        return None                                   # период ещё не начался
+    absent = sum(int(sub.get("countAbsence") or 0) for sub in subjects)
+    ill = sum(int(sub.get("countIllAbsence") or 0) for sub in subjects)
+    late = sum(int(sub.get("countBeingLate") or 0) for sub in subjects)
+    seen, groups = set(), {}
+    for sub in subjects:
+        for e in sub.get("lessonLogEntries") or []:
+            lid = e.get("lessonId") or e.get("id")
+            if lid in seen or not str(e.get("date") or "").isdigit():
+                continue
+            seen.add(lid)
+            name = clean(e.get("fullName")) or clean(e.get("value"))
+            low = name.lower()
+            kind = "late" if "опозд" in low else "ill" if "болезн" in low else "absent"
+            day = datetime.fromtimestamp(int(e["date"]), tz=timezone.utc).date().isoformat()
+            g = groups.setdefault((day, kind), {"date": day, "kind": kind, "name": name, "lessons": []})
+            if isinstance(e.get("lessonNumber"), int):
+                g["lessons"].append(e["lessonNumber"])
+    days = sorted(groups.values(), key=lambda g: (g["date"], g["kind"]))
+    for g in days:
+        g["lessons"] = sorted(set(g["lessons"]))
+    if not absent and not late and days:              # счётчиков нет, но журнал есть: считаем по журналу
+        absent = sum(max(1, len(g["lessons"])) for g in days if g["kind"] != "late")
+        ill = sum(max(1, len(g["lessons"])) for g in days if g["kind"] == "ill")
+        late = sum(max(1, len(g["lessons"])) for g in days if g["kind"] == "late")
+    percent = max(0, min(100, round(100 * (total - absent) / total)))
+    return {"total": total, "absent": absent, "ill": ill, "late": late, "percent": percent, "days": days}
+
+
 def parse_term(data, period):
     """Оценки по предметам за один триместр: все оценки по порядку и средний балл."""
     subs = []
@@ -305,7 +339,7 @@ def parse_term(data, period):
         if marks or avg:
             subs.append({"name": clean(sub.get("name")), "marks": marks, "average": avg})
     subs.sort(key=lambda x: x["name"].lower())
-    return {"number": period["number"] + 1, "name": period["name"], "subjects": subs}
+    return {"number": period["number"] + 1, "name": period["name"], "subjects": subs, "attendance": parse_attendance(data)}
 
 
 def fetch_study_info(client, ids, old_years=None, now=None):
@@ -318,7 +352,7 @@ def fetch_study_info(client, ids, old_years=None, now=None):
     years = []
     for idx, g in enumerate(groups):
         prev = old.get(g["year"])
-        if idx > 0 and prev and prev.get("terms") is not None and now - prev.get("fetchedAt", 0) < 30 * 86400:
+        if idx > 0 and prev and prev.get("terms") is not None and prev.get("format") == STUDY_FORMAT and now - prev.get("fetchedAt", 0) < 30 * 86400:
             years.append(prev)
             continue
         base = f"/api/v2/marks/school/{ids['schoolId']}/person/{ids['personId']}"
@@ -334,11 +368,11 @@ def fetch_study_info(client, ids, old_years=None, now=None):
                     raise
                 except Exception:
                     continue
-                if term["subjects"] or per["default"]:
+                if term["subjects"] or term["attendance"] or per["default"]:
                     terms.append(term)
             years.append({"year": g["year"], "label": f"{g['year']}/{g['year'] + 1}", "className": g["className"],
                           "periodLabel": "тр" if g["trimesters"] else "пер.", "columns": n, "current": idx == 0,
-                          "terms": terms, "final": final_rows, "fetchedAt": int(now)})
+                          "terms": terms, "final": final_rows, "fetchedAt": int(now), "format": STUDY_FORMAT})
         except NeedLogin:
             raise
         except Exception:
@@ -349,6 +383,7 @@ def fetch_study_info(client, ids, old_years=None, now=None):
 
 # ---------------------------------------------------------------- вход по логину и паролю
 LOGIN_URL = "https://login.dnevnik.ru/login/"
+STUDY_FORMAT = 2            # номер формата данных по годам: при смене сохранённое перезапрашивается
 INFO_EVERY_HOURS = 3        # ученика и итоговые оценки обновляем не чаще раза в 3 часа
 RELOGIN_PAUSE = 6 * 3600   # после неудачного входа повторяем не раньше чем через 6 часов: чтобы не заблокировали учётную запись
 

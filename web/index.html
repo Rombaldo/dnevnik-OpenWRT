@@ -244,6 +244,26 @@
   .mbtns .safe { background: var(--brand); color: var(--brand-ink); }
   .mbtns .danger { background: var(--banner-bad-bg); color: var(--banner-bad-ink); }
   .mbtns .danger:disabled { opacity: .55; }
+
+  /* ---- посещаемость ---- */
+  .att { display: block; }
+  .att-head { display: flex; align-items: center; gap: 14px; }
+  .att-pct { min-width: 84px; height: 84px; border-radius: 22px; background: var(--ok-soft); color: var(--ok); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .att-pct strong { font-size: 28px; line-height: 1; }
+  .att-pct span { font-size: 11px; font-weight: 700; margin-top: 3px; }
+  .att.warn .att-pct { background: #fff0e0; color: #b45309; }
+  @media (prefers-color-scheme: dark) { .att.warn .att-pct { background: #3a2a14; color: #ffc277; } }
+  .att-text { flex: 1; min-width: 0; font-size: 16px; line-height: 1.35; }
+  .att-text b { font-size: 18px; }
+  .att-title { font-weight: 800; font-size: 17px; margin: 0 0 10px; }
+  .att details { margin-top: 12px; }
+  .att summary { cursor: pointer; color: var(--brand); font-weight: 700; font-size: 16px; }
+  .att-day { display: flex; gap: 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .att-day:first-of-type { margin-top: 8px; }
+  .att-day b { min-width: 92px; }
+  .att-day span:last-child { color: var(--muted); flex: 1; }
+  .att-terms { margin-top: 10px; display: grid; gap: 6px; }
+  .att-terms div { display: flex; justify-content: space-between; gap: 10px; font-size: 15px; padding: 8px 12px; border-radius: 12px; background: var(--bg); }
   .empty { text-align: center; color: var(--muted); padding: 50px 10px; background: var(--card); border-radius: 22px; box-shadow: var(--shadow); }
   .empty .em { font-size: 54px; display: block; margin-bottom: 6px; }
 
@@ -562,6 +582,49 @@ function markChip(v, small = true) {
   return `<span class="mark ${small ? "sm" : ""} ${cls(first)}">${esc(t)}</span>`;
 }
 
+// ---------- Посещаемость ----------
+const plural = (n, f) => { const m = Math.abs(n) % 100, d = m % 10; return m > 10 && m < 20 ? f[2] : d > 1 && d < 5 ? f[1] : d === 1 ? f[0] : f[2]; };
+const lessonsWord = (n) => `${n} ${plural(n, ["урок", "урока", "уроков"])}`;
+const WDAY = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+const ATT_ICON = { ill: "🤒", absent: "❗", late: "⏰" };
+function lessonRanges(list) {
+  const a = [...list].sort((x, y) => x - y), out = [];
+  for (let i = 0; i < a.length; ) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? `${a[i]}–${a[j]}` : `${a[i]}`); i = j + 1; }
+  return out.join(", ");
+}
+function attendanceCard(a, title = "Посещаемость") {
+  if (!a) return "";
+  const absent = Number(a.absent) || 0, ill = Number(a.ill) || 0, late = Number(a.late) || 0, other = absent - ill;
+  const parts = [];
+  if (ill) parts.push(`${lessonsWord(ill)} по болезни`);
+  if (other > 0) parts.push(`${lessonsWord(other)} по другим причинам`);
+  const text = !absent && !late
+    ? `<b>🎉 Пропусков и опозданий нет</b><br>Всего уроков: ${Number(a.total) || 0}`
+    : `<b>Пропущено ${lessonsWord(absent)}</b>${parts.length ? `<br>${parts.join(", ")}` : ""}${late ? `<br>Опозданий: ${late}` : ""}<br>Всего уроков: ${Number(a.total) || 0}`;
+  const days = (a.days || []).length ? `<details><summary>Показать дни (${a.days.length})</summary>${a.days.map((d) => {
+    const dt = parse(d.date);
+    return `<div class="att-day"><span>${ATT_ICON[d.kind] || "•"}</span><b>${dt.getDate()} ${MONTHS[dt.getMonth()]}, ${WDAY[dt.getDay()]}</b>
+      <span>${esc(d.name)}${(d.lessons || []).length ? `, ${(d.lessons || []).length > 1 ? "уроки" : "урок"} ${esc(lessonRanges(d.lessons))}` : ""}</span></div>`; }).join("")}</details>` : "";
+  return `<div class="card att ${absent || late ? "warn" : ""}"><div class="att-title">${esc(title)}</div>
+    <div class="att-head"><div class="att-pct"><strong>${Number(a.percent) || 0}%</strong><span>на уроках</span></div><div class="att-text">${text}</div></div>${days}</div>`;
+}
+function attendanceYear(y) {
+  const rows = (y.terms || []).filter((t) => t.attendance);
+  if (!rows.length) return "";
+  const total = rows.reduce((s, t) => s + (Number(t.attendance.total) || 0), 0), absent = rows.reduce((s, t) => s + (Number(t.attendance.absent) || 0), 0);
+  const pct = total ? Math.round((100 * (total - absent)) / total) : 100;
+  const lab = y.periodLabel === "тр" ? "тр" : "пер.";
+  return `<div class="card att ${absent ? "warn" : ""}" style="margin-top:12px"><div class="att-title">Посещаемость за год</div>
+    <div class="att-head"><div class="att-pct"><strong>${pct}%</strong><span>на уроках</span></div>
+    <div class="att-text"><b>${absent ? `Пропущено ${lessonsWord(absent)}` : "🎉 Пропусков нет"}</b><br>Всего уроков: ${total}</div></div>
+    <div class="att-terms">${rows.map((t) => `<div><span>${esc(t.number)} ${lab}</span><span>${t.attendance.absent ? `пропущено ${lessonsWord(Number(t.attendance.absent) || 0)}` : "без пропусков"} · ${Number(t.attendance.percent) || 0}%</span></div>`).join("")}</div></div>`;
+}
+function currentAttendanceCard() {
+  const y = (data.years || []).find((x) => x.current);
+  const t = y && [...(y.terms || [])].reverse().find((x) => x.attendance);
+  return t ? attendanceCard(t.attendance, `Посещаемость (${t.number} ${y.periodLabel === "тр" ? "тр" : "пер."})`) : "";
+}
+
 function viewYears() {
   const years = data.years || [];
   if (!years.length) return `<div class="empty"><span class="em">📚</span>Итоговые оценки появятся после следующего обновления.</div>`;
@@ -585,9 +648,10 @@ function viewYears() {
     }
     out += `</div>`;
     if (!y.final.length) out = out.replace(/<div class="fin".*$/s, `<div class="empty">Итоговых оценок за этот год пока нет.</div>`);
-    return out + `<div class="term-sub" style="margin-top:10px">«–» — оценка за период ещё не выставлена.</div>`;
+    return out + `<div class="term-sub" style="margin-top:10px">«–» — оценка за период ещё не выставлена.</div>` + attendanceYear(y);
   }
   const t = y.terms.find((x) => String(x.number) === sel);
+  if (t && t.attendance) out += `<div style="margin-top:12px">${attendanceCard(t.attendance)}</div>`;
   if (!t || !t.subjects.length) return out + `<div class="empty"><span class="em">🌱</span>В этом периоде оценок пока нет.</div>`;
   out += `<div class="cards2" style="margin-top:12px">`;
   for (const sb of t.subjects) {
@@ -605,7 +669,7 @@ function viewMarks() {
   if (hasYears && marksView === "years") return [tabs + viewYears(), ""];
   const marks = allMarks();
   if (!marks.length) return [tabs + `<div class="empty"><span class="em">⭐</span>Оценок пока нет.</div>`, ""];
-  let out = tabs + recentMarksCard(8);
+  let out = tabs + currentAttendanceCard() + recentMarksCard(8);
 
   const by = {};
   for (const m of marks) (by[m.subject] ??= []).push(m);

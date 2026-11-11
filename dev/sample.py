@@ -48,9 +48,14 @@ def make_sample(today=None, seed=7):
             })
         days.append({"date": d.isoformat(), "weekday": ["пн", "вт", "ср", "чт", "пт"][d.weekday()], "lessons": lessons})
     subjects = ["Англ. язык", "Математика", "Музыка", "Рус. язык"]
-    cur_terms = [{"number": 1, "name": "1 триместр",
+    no_absence = {"total": 120, "absent": 0, "ill": 0, "late": 0, "percent": 100, "days": []}
+    with_absence = {"total": 249, "absent": 6, "ill": 5, "late": 1, "percent": 98, "days": [
+        {"date": "2025-10-06", "kind": "ill", "name": "Пропуск по болезни", "lessons": [1, 2, 3, 4, 5]},
+        {"date": "2025-10-20", "kind": "absent", "name": "Пропуск без уважительной причины", "lessons": [2]},
+        {"date": "2025-10-21", "kind": "late", "name": "Опоздание", "lessons": [1]}]}
+    cur_terms = [{"number": 1, "name": "1 триместр", "attendance": no_absence,
                   "subjects": [{"name": n, "marks": [str(rnd.choice([3, 4, 5])) for _ in range(6)], "average": "4,2"} for n in subjects]}]
-    past_terms = [{"number": k, "name": f"{k} триместр",
+    past_terms = [{"number": k, "name": f"{k} триместр", "attendance": with_absence if k == 1 else dict(no_absence, total=243),
                    "subjects": [{"name": n, "marks": [str(rnd.choice([3, 4, 5])) for _ in range(5)], "average": "4,1"} for n in subjects]}
                   for k in (1, 2, 3)]
     return {

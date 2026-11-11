@@ -128,6 +128,8 @@ class UiSmokeTests(unittest.TestCase):
             y["label"], y["className"] = evil, evil
             for term in y["terms"]:
                 term["subjects"] = [{"name": evil, "marks": [evil], "average": evil}]
+                term["attendance"] = {"total": evil, "absent": evil, "ill": evil, "late": evil, "percent": evil,
+                                      "days": [{"date": "2025-10-06", "kind": evil, "name": evil, "lessons": [evil, 2]}]}
             y["final"] = [{"name": evil, "periods": [evil, evil, evil], "year": evil}]
         ctx = self.browser.new_context(viewport={"width": 375, "height": 812})
         page = ctx.new_page()
@@ -356,6 +358,51 @@ class UiSmokeTests(unittest.TestCase):
         page.click('[data-term="final"]')
         self.assertGreater(len(page.inner_text(".fin")), 20)
         self.assertEqual(errors, [])
+
+    # ---- посещаемость
+    def test_attendance_in_a_term_with_absences(self):
+        page, errors = self.open_years()
+        page.click('[data-year="1"]')
+        page.click('[data-term="1"]')
+        text = page.inner_text(".att")
+        self.assertIn("Пропущено 6 уроков", text)
+        self.assertIn("5 уроков по болезни", text)
+        self.assertIn("1 урок по другим причинам", text)
+        self.assertIn("Опозданий: 1", text)
+        self.assertIn("98%", text)
+        self.assertEqual(page.is_visible(".att-day"), False)                           # дни свёрнуты
+        page.click(".att summary")
+        days = page.inner_text(".att details")
+        self.assertIn("6 окт", days)
+        self.assertIn("уроки 1–5", days)                                               # подряд идущие уроки сжаты
+        self.assertIn("Опоздание", days)
+        self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376)
+        self.assertEqual(errors, [])
+
+    def test_attendance_without_absences_is_a_good_news(self):
+        page, errors = self.open_years()
+        self.assertIn("Пропусков и опозданий нет", page.inner_text(".att"))
+        self.assertIsNone(page.query_selector(".att details"))
+        self.assertEqual(errors, [])
+
+    def test_attendance_for_the_year_and_on_the_main_marks_screen(self):
+        page, errors = self.open_years()
+        page.click('[data-year="1"]')
+        page.click('[data-term="final"]')
+        text = page.inner_text(".att")
+        self.assertIn("Посещаемость за год", text)
+        self.assertIn("1 тр", text)
+        self.assertIn("без пропусков", text)
+        page.click('[data-mview="now"]')
+        self.assertIn("Посещаемость (1 тр)", page.inner_text("#main"))
+        self.assertEqual(errors, [])
+
+    def test_russian_plurals(self):
+        page, _ = self.open(375, 812)
+        got = page.evaluate("[1, 2, 4, 5, 11, 12, 14, 21, 22, 25, 101, 111].map(lessonsWord)")
+        self.assertEqual(got, ["1 урок", "2 урока", "4 урока", "5 уроков", "11 уроков", "12 уроков", "14 уроков",
+                               "21 урок", "22 урока", "25 уроков", "101 урок", "111 уроков"])
+        self.assertEqual(page.evaluate("lessonRanges([5, 1, 2, 3, 7, 8])"), "1–3, 5, 7–8")
 
     def test_marks_without_years_still_work(self):
         from dev.sample import make_sample
