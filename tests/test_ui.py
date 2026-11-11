@@ -62,12 +62,24 @@ class UiSmokeTests(unittest.TestCase):
 
     def test_done_checkbox_updates_progress(self):
         page, errors = self.open(375, 812)
-        card = page.query_selector(".hw")
-        if card:
-            before = page.inner_text("#hero .small")
-            card.query_selector(".check").click()
-            page.wait_for_timeout(150)
-            self.assertNotEqual(before, page.inner_text("#hero .small"))
+        before = page.inner_text(".day .dprog b")
+        page.query_selector(".strip .check").click()
+        page.wait_for_timeout(150)
+        self.assertNotEqual(before, page.inner_text(".day .dprog b"))
+        page.close()
+        self.assertEqual(errors, [])
+
+    def test_attachment_link_and_lesson_details(self):
+        page, errors = self.open(375, 812)
+        link = page.query_selector("a.file")
+        self.assertIsNotNone(link, "ссылка на вложение не нарисована")
+        self.assertIn("files/1.pdf", link.get_attribute("href"))
+        self.assertIn("Презентация", link.inner_text())
+        self.assertIsNotNone(page.query_selector(".file.off"), "нескачанный файл должен показываться без ссылки")
+        # раскрытие урока по нажатию на заголовок
+        head = page.query_selector("[data-toggle]")
+        head.click()
+        self.assertTrue(page.query_selector(".lesson2.open"))
         page.close()
         self.assertEqual(errors, [])
 

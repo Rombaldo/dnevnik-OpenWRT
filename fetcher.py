@@ -6,6 +6,7 @@
 """
 import json
 import os
+import re
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -104,8 +105,14 @@ def norm_day(d):
         hw = l.get("homework") or {}
         files = []
         for a in hw.get("attachments") or []:
-            if isinstance(a, dict):
-                files.append(a.get("fileName") or a.get("name") or "файл")
+            if isinstance(a, dict) and re.fullmatch(r"\d+", str(a.get("fileId") or "")):
+                files.append({
+                    "id": str(a["fileId"]),
+                    "name": a.get("fileName") or a.get("name") or "файл",
+                    "ext": str(a.get("fileExtension") or "").lower().lstrip("."),
+                    "size": int(a.get("size") or 0),
+                    "link": a.get("fileLink") or "",
+                })
         marks = []
         for w in l.get("workMarks") or []:
             for m in w.get("marks") or []:
@@ -123,6 +130,62 @@ def norm_day(d):
             "marks": marks,
         })
     return {"date": day.isoformat(), "weekday": WEEKDAYS[day.weekday()], "lessons": lessons}
+
+
+ALLOWED_EXT = {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "rtf", "odt",
+               "jpg", "jpeg", "png", "gif", "webp"}
+MAX_FILE = 30 * 1024 * 1024   # файлы больше 30 МБ не скачиваем
+FILES = DATA / "files"
+
+
+def trusted_link(url):
+    u = urlparse(url or "")
+    h = u.hostname or ""
+    return u.scheme == "https" and (h == "dnevnik.ru" or h.endswith(".dnevnik.ru") or h.endswith(".csdnevnik.ru"))
+
+
+def file_path(f):
+    return FILES / f"{f['id']}.{f['ext']}"
+
+
+def download_files(ctx, history):
+    """Скачивает вложения к домашке (свежие и будущие уроки). Помечает f['ok'], когда файл лежит у нас."""
+    FILES.mkdir(parents=True, exist_ok=True)
+    cutoff = (date.today() - timedelta(days=14)).isoformat()
+    for day in history.values():
+        for l in day["lessons"]:
+            for f in l.get("files", []):
+                if not isinstance(f, dict):
+                    continue
+                path = file_path(f)
+                f["ok"] = path.exists()
+                if f["ok"] or day["date"] < cutoff:
+                    continue
+                if f["ext"] not in ALLOWED_EXT or not trusted_link(f.get("link")) or f.get("size", 0) > MAX_FILE:
+                    continue
+                try:
+                    r = ctx.request.get(f["link"], timeout=90000)
+                    body = r.body() if r.ok else b""
+                except Exception as e:
+                    print(f"файл {f['name']} не скачался: {e}", flush=True)
+                    continue
+                if body and len(body) <= MAX_FILE:
+                    tmp = path.with_suffix(".part")
+                    tmp.write_bytes(body)
+                    tmp.replace(path)
+                    f["ok"] = True
+                    print(f"скачан файл: {f['name']}.{f['ext']} ({len(body) // 1024} КБ)", flush=True)
+
+
+def public_days(history):
+    """Дни для страницы: без служебных ссылок на файлы."""
+    days = []
+    for k in sorted(history):
+        d = json.loads(json.dumps(history[k]))
+        for l in d["lessons"]:
+            l["files"] = [{k2: v for k2, v in f.items() if k2 != "link"} for f in l.get("files", []) if isinstance(f, dict)]
+        days.append(d)
+    return days
 
 
 def fetch_range(page, ids, start, finish):
@@ -223,6 +286,10 @@ def sync():
             except Exception as e:  # рейтинг - приятное дополнение, его сбой не должен ронять всё остальное
                 print("рейтинг не получен:", e, flush=True)
                 rating = None
+            try:
+                download_files(ctx, history)
+            except Exception as e:  # вложения не должны ронять обновление дневника
+                print("вложения не обработаны:", e, flush=True)
             save_cookies(ctx)
         except PWTimeout as e:
             raise NeedLogin("дневник не отдал данные (скорее всего, вход истёк)") from e
@@ -231,7 +298,7 @@ def sync():
 
     DATA.mkdir(exist_ok=True)
     HISTORY.write_text(json.dumps(history, ensure_ascii=False))
-    days = [history[k] for k in sorted(history)]
+    days = public_days(history)
     out = {"updatedAt": datetime.now().isoformat(timespec="seconds"), "days": days, "rating": rating}
     tmp = OUT.with_suffix(".tmp")
     tmp.write_text(json.dumps(out, ensure_ascii=False))

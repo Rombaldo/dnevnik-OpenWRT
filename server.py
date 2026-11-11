@@ -4,6 +4,7 @@
 Открыть: http://<адрес-Mac>:8765  (адрес печатается при запуске)
 """
 import json
+import re
 import socket
 import sys
 import threading
@@ -12,6 +13,7 @@ import traceback
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, quote, urlparse
 
 import fetcher
 
@@ -81,6 +83,17 @@ MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=ut
         ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png"}
 
 
+FILE_RE = re.compile(r"/files/(\d+)\.([a-z0-9]+)")
+FILE_MIME = {
+    "pdf": "application/pdf", "txt": "text/plain; charset=utf-8", "rtf": "application/rtf",
+    "doc": "application/msword", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "ppt": "application/vnd.ms-powerpoint", "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "odt": "application/vnd.oasis.opendocument.text",
+    "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -114,6 +127,26 @@ class Handler(BaseHTTPRequestHandler):
             html = html.replace("/*INLINE_DATA*/null", blob)
             return self.send(200, html, MIME[".html"],
                              {"Content-Disposition": 'attachment; filename="dnevnik-offline.html"'})
+        m = FILE_RE.fullmatch(path)
+        if m:   # вложения к домашке: только файлы, которые сами скачали, и только известных типов
+            fid, ext = m.group(1), m.group(2)
+            if ext not in FILE_MIME:
+                return self.send(404, "не найдено", "text/plain; charset=utf-8")
+            if DEMO:
+                from dev.sample import SAMPLE_PDF
+                body = SAMPLE_PDF if (fid, ext) == ("1", "pdf") else None
+            else:
+                fp = fetcher.FILES / f"{fid}.{ext}"
+                body = fp.read_bytes() if fp.is_file() else None
+            if body is None:
+                return self.send(404, "не найдено", "text/plain; charset=utf-8")
+            raw = parse_qs(urlparse(self.path).query).get("name", [f"{fid}.{ext}"])[0]
+            name = re.sub(r'[\x00-\x1f"\\/:*?<>|]+', " ", raw).strip()[:120] or f"{fid}.{ext}"
+            if not name.lower().endswith("." + ext):
+                name += "." + ext
+            return self.send(200, body, FILE_MIME[ext], {
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": f"inline; filename*=UTF-8''{quote(name)}"})
         if path == "/":
             path = "/index.html"
         f = (WEB / path.lstrip("/")).resolve()

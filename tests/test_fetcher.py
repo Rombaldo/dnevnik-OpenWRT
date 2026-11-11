@@ -44,9 +44,28 @@ class NormDayTests(unittest.TestCase):
     def test_missing_homework_and_attachments(self):
         l = fetcher.norm_day(raw_day([raw_lesson(homework=None)]))["lessons"][0]
         self.assertEqual((l["homework"], l["files"]), ("", []))
-        att = {"text": "см. файл", "attachments": [{"fileName": "a.pdf"}]}
+        att = {"text": "см. файл", "attachments": [
+            {"fileId": "42", "fileName": "Карта", "fileExtension": "PDF", "size": 1000,
+             "fileLink": "https://b5.csdnevnik.ru/x.pdf?a=1"},
+            {"fileName": "без номера"},  # без числового id файл не берём
+        ]}
         l = fetcher.norm_day(raw_day([raw_lesson(homework=att)]))["lessons"][0]
-        self.assertEqual(l["files"], ["a.pdf"])
+        self.assertEqual(l["files"], [{"id": "42", "name": "Карта", "ext": "pdf", "size": 1000,
+                                       "link": "https://b5.csdnevnik.ru/x.pdf?a=1"}])
+
+    def test_public_days_strip_file_links(self):
+        att = {"text": "x", "attachments": [{"fileId": "7", "fileName": "f", "fileExtension": "pdf", "size": 1, "fileLink": "https://b5.csdnevnik.ru/s"}]}
+        day = fetcher.norm_day(raw_day([raw_lesson(homework=att)]))
+        pub = fetcher.public_days({day["date"]: day})
+        self.assertNotIn("link", pub[0]["lessons"][0]["files"][0])
+        self.assertIn("link", day["lessons"][0]["files"][0])   # а в закрытой истории ссылка остаётся
+
+    def test_trusted_link(self):
+        self.assertTrue(fetcher.trusted_link("https://b5.csdnevnik.ru/a.pdf?x=1"))
+        self.assertTrue(fetcher.trusted_link("https://dnevnik.ru/f"))
+        for bad in ["http://b5.csdnevnik.ru/a.pdf", "https://evil.example.com/a.pdf", "https://csdnevnik.ru.evil.com/a",
+                    "file:///etc/passwd", "", None]:
+            self.assertFalse(fetcher.trusted_link(bad), bad)
 
     def test_canceled_flag(self):
         l = fetcher.norm_day(raw_day([raw_lesson(isCanceled=True)]))["lessons"][0]

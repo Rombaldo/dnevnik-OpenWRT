@@ -169,6 +169,50 @@
   .now-tag { font-size: 11px; font-weight: 800; background: var(--brand); color: #fff; padding: 2px 8px; border-radius: 99px; margin-left: 8px; vertical-align: 2px; }
   .lesson .ic { width: 44px; height: 44px; min-width: 44px; font-size: 23px; border-radius: 14px; }
 
+
+  /* ---- лента дней (вкладка «Домашка») ---- */
+  body.feed { background: linear-gradient(180deg, #5469ee 0, #7a8ff3 380px, #a9b8fa 1100px, #dde3ff 2000px) #dde3ff; }
+  @media (prefers-color-scheme: dark) { body.feed { background: linear-gradient(180deg, #2b3482 0, #1f2660 420px, #151a3e 1200px, #10131e 2200px) #10131e; } }
+  body.feed header { background: transparent; }
+  .day { position: relative; background: var(--card); border-radius: 26px; padding: 18px 16px 8px; margin: 0 0 16px; box-shadow: 0 8px 26px rgba(30,40,110,.18); overflow: hidden; scroll-margin-top: 12px; }
+  .day .scene { position: absolute; right: -26px; top: 10px; width: 140px; height: 70px; border-radius: 50% 0 0 50%; background: linear-gradient(180deg, #6bb74b, #4c9a3a); display: flex; align-items: flex-start; justify-content: center; }
+  .day .scene span { font-size: 38px; margin: -2px 16px 0 0; line-height: 1; }
+  .dtitle { font-size: 21px; font-weight: 800; padding-right: 104px; line-height: 1.25; }
+  .dtitle .rel { color: var(--brand); }
+  .dprog { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 16px; }
+  .dprog b { color: var(--ink); font-size: 20px; }
+  .dpi { width: 32px; height: 32px; border-radius: 10px; background: var(--brand-soft); color: var(--brand); display: inline-flex; align-items: center; justify-content: center; font-size: 17px; }
+  .day .bar { margin: 12px 0 12px; height: 12px; }
+  .day.all-done .bar > i { background: linear-gradient(90deg, #35c46f, #1f9d55); }
+  .cheer { background: var(--ok-soft); color: var(--ok); font-weight: 700; border-radius: 14px; padding: 10px 14px; margin: 0 0 12px; font-size: 16px; }
+  .lessons2 { display: block; }
+  .lesson2 { background: var(--bg); border-radius: 20px; padding: 6px 10px 10px; margin: 0 0 10px; }
+  @media (prefers-color-scheme: dark) { .lesson2 { background: #222842; } }
+  .lesson2.off { opacity: .55; }
+  .lhead { display: flex; align-items: center; gap: 10px; padding: 8px 2px; cursor: pointer; }
+  .lic { width: 40px; height: 40px; min-width: 40px; border-radius: 13px; background: var(--cbg, var(--brand-soft)); display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .lt { flex: 1; min-width: 0; } .lt b { display: block; font-size: 19px; line-height: 1.2; } .lt span { color: var(--muted); font-size: 14px; }
+  .chev { color: var(--brand); font-size: 28px; line-height: 1; transition: transform .15s; padding: 0 4px; }
+  .lesson2.open .chev { transform: rotate(90deg); }
+  .ldetails { display: none; color: var(--muted); font-size: 15px; padding: 2px 4px 8px; }
+  .lesson2.open .ldetails { display: block; }
+  .strip { display: flex; align-items: center; gap: 12px; background: #dbe6ff; border-radius: 16px; padding: 10px 10px 10px 14px; }
+  @media (prefers-color-scheme: dark) { .strip { background: #2c3768; } }
+  .strip .stext { flex: 1; min-width: 0; }
+  .strip .text { font-size: 19px; margin: 0; overflow-wrap: anywhere; line-height: 1.35; }
+  .strip .check { width: 46px; height: 46px; min-width: 46px; border-radius: 50%; border: 3px solid #fff; background: rgba(255,255,255,.6); font-size: 26px; }
+  @media (prefers-color-scheme: dark) { .strip .check { border-color: #4a5690; background: transparent; } }
+  .strip.done .check { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .strip.done .text { text-decoration: line-through; opacity: .6; }
+  .file { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 14px; padding: 10px 12px; margin-top: 8px; color: var(--ink); text-decoration: none; flex-wrap: wrap; }
+  .strip .text + .file { margin-top: 10px; }
+  .file .fic { font-size: 26px; line-height: 1; }
+  .file .fn { flex: 1; min-width: 140px; font-weight: 700; font-size: 16px; overflow-wrap: anywhere; line-height: 1.25; }
+  .file .fs { color: var(--brand); font-size: 14px; font-weight: 600; }
+  .file.off .fs { color: var(--muted); font-weight: 500; }
+  a.file:active { filter: brightness(.95); }
+  .pastbtn { display: block; width: 100%; margin: 0 0 14px; padding: 14px; border: 0; border-radius: 18px; background: rgba(255,255,255,.28); color: #fff; font-weight: 700; font-size: 16px; }
+  @media (prefers-color-scheme: light) { body.feed .aside h2 { color: #fff; } }
   .empty { text-align: center; color: var(--muted); padding: 50px 10px; background: var(--card); border-radius: 22px; box-shadow: var(--shadow); }
   .empty .em { font-size: 54px; display: block; margin-bottom: 6px; }
 
@@ -279,6 +323,7 @@ function render() {
   } else $("#updated").textContent = "Данных пока нет";
   $("#refresh").style.display = window.__DATA__ ? "none" : "";
   document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  document.body.classList.toggle("feed", tab === "hw");
   let body;
   if (!data || !data.days?.length) {
     body = `<div class="empty"><span class="em">⏳</span>Данные ещё загружаются.<br>Подожди пару минут и нажми «Обновить».</div>`;
@@ -327,46 +372,63 @@ function dayScheduleCard(date, title) {
   }).join("")}</div>`;
 }
 
-// ---------- Домашка ----------
+// ---------- Домашка: лента дней, как в приложении Дневник.ру ----------
+const SCENE = { пн: "🚲", вт: "🛴", ср: "🚲", чт: "🛴", пт: "🏃" };
+const hasHw = (l) => !l.canceled && (!noHw(l.homework) || (l.files || []).length > 0);
+const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1).replace(".", ",")} МБ` : `${Math.max(1, Math.round(b / 1024))} КБ`);
+let showPast = false;
+
+function fileChips(l) {
+  return (l.files || []).map((f) => {
+    const title = `${f.name}.${f.ext}`;
+    if (f.ok && !window.__DATA__)
+      return `<a class="file" href="files/${esc(f.id)}.${esc(f.ext)}?name=${encodeURIComponent(title)}" target="_blank" rel="noopener">
+        <span class="fic">${f.ext === "pdf" ? "📄" : /^(jpe?g|png|gif|webp)$/.test(f.ext) ? "🖼️" : "📎"}</span>
+        <span class="fn">${esc(title)}</span><span class="fs">${fmtSize(f.size)} · открыть</span></a>`;
+    return `<div class="file off"><span class="fic">📎</span><span class="fn">${esc(title)}</span>
+      <span class="fs">${window.__DATA__ ? "открывается дома по Wi-Fi" : "пока не скачан, смотри на сайте"}</span></div>`;
+  }).join("");
+}
+
+function dayCard(d, done, focusId) {
+  const keyOf = (l) => `${d.date}|${l.subject}|${l.n}`;
+  const list = d.lessons.filter((l) => hasHw(l));
+  const dn = list.filter((l) => done[keyOf(l)]).length, total = list.length, rr = rel(d.date);
+  const label = rr === "Сегодня" ? "ДЗ на сегодня" : "ДЗ на день";
+  const allDone = total > 0 && dn === total;
+  const lessons = d.lessons.map((l) => {
+    const s = subj(l.subject), key = keyOf(l), isDone = !!done[key];
+    const strip = hasHw(l) ? `<div class="strip ${isDone ? "done" : ""}" data-key="${esc(key)}">
+        <div class="stext">${!noHw(l.homework) ? `<div class="text">${esc(l.homework)}</div>` : ""}${fileChips(l)}</div>
+        <button class="check" aria-label="Сделано">✓</button></div>` : "";
+    return `<div class="lesson2 ${l.canceled ? "off" : ""}" style="${s.style}">
+      <div class="lhead" data-toggle><span class="lic">${s.icon}</span>
+        <div class="lt"><b>${l.n}. ${esc(l.subject)}</b><span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · урок отменён" : ""}</span></div>
+        ${l.marks.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}<span class="chev">›</span></div>
+      <div class="ldetails">${l.theme ? `<b>Тема урока:</b> ${esc(l.theme)}` : "Тема урока пока не указана"}</div>
+      ${strip}</div>`;
+  }).join("");
+  return `<section class="day ${allDone ? "all-done" : ""}" ${d.date === focusId ? 'id="focus-day"' : ""}>
+    <div class="scene"><span>${SCENE[d.weekday] ?? "🚲"}</span></div>
+    <div class="dtitle">${esc(d.weekday)}, ${dayName(d.date)}${rr ? ` <span class="rel">${rr}</span>` : ""}</div>
+    <div class="dprog"><span class="dpi">☑</span>${total
+      ? `<b>${dn}/${total}</b> <span>${label}</span>` : `<span>Домашки нет 🎉</span>`}</div>
+    ${total ? `<div class="bar"><i style="width:${Math.round((dn / total) * 100)}%"></i></div>` : ""}
+    ${allDone ? `<div class="cheer">Всё сделано! Можно отдыхать 🎉</div>` : ""}
+    <div class="lessons2">${lessons}</div></section>`;
+}
+
 function viewHw() {
   const focus = focusDate();
+  const all = schoolDays();
   if (!focus) return [`<div class="empty"><span class="em">🎉</span>Ближайших уроков нет. Отдыхай!</div>`, ""];
   const done = store.get("done", {});
-  const days = schoolDays().filter((d) => d.date >= focus).slice(0, 6);
-  const keyOf = (d, l) => `${d.date}|${l.subject}|${l.n}`;
-  const items = (d) => d.lessons.filter((l) => !noHw(l.homework) && !l.canceled);
-
-  const f = days[0], fi = items(f), fdone = fi.filter((l) => done[keyOf(f, l)]).length;
-  const r = rel(f.date) ?? WD[f.weekday];
-  const lc = r.toLowerCase();
-  let big, small = "";
-  if (!fi.length) big = `На ${lc === "сегодня" ? "сегодня" : lc === "завтра" ? "завтра" : lc} домашки нет 🎉`;
-  else if (fdone === fi.length) big = "Всё сделано! Можно отдыхать 🎉";
-  else big = `${lc === "сегодня" ? "На сегодня" : lc === "завтра" ? "На завтра" : "На " + lc}: осталось ${fi.length - fdone} из ${fi.length}`;
-  if (fi.length) small = `Сделано ${fdone} из ${fi.length}`;
-  let out = `<div class="hero ${fi.length && fdone === fi.length ? "all-done" : ""}" id="hero">
-      <div class="big">${big}</div>${small ? `<div class="small">${small}</div>` : ""}
-      ${fi.length ? `<div class="bar"><i style="width:${Math.round((fdone / fi.length) * 100)}%"></i></div>` : ""}</div>`;
-
-  days.forEach((d, i) => {
-    const withHw = items(d), without = d.lessons.filter((l) => noHw(l.homework) && !l.canceled).map((l) => l.subject);
-    const rr = rel(d.date);
-    out += `<h2>${rr ? `<span class="tag">${rr}</span>` : `<span class="tag soft">${esc(d.weekday)}</span>`}${esc(WD[d.weekday] ?? d.weekday)}, ${dayName(d.date)}</h2>`;
-    if (!withHw.length) out += `<div class="free">🎉 Домашки нет</div>`;
-    for (const l of withHw) {
-      const key = keyOf(d, l), s = subj(l.subject);
-      out += `<div class="card hw ${done[key] ? "done" : ""}" data-key="${esc(key)}" data-day="${d.date}" style="${s.style}">
-        <div class="ic">${s.icon}</div>
-        <div class="body"><div class="subj">${esc(l.subject)}</div><span class="time">урок ${l.n} · ${esc(l.start)}</span>
-        <div class="text">${esc(l.homework)}</div>
-        ${l.files.length ? `<div class="files">📎 ${l.files.map(esc).join(", ")} (файл смотри на сайте)</div>` : ""}</div>
-        <button class="check" aria-label="Сделано">✓</button></div>`;
-    }
-    if (without.length && withHw.length) out += `<div class="none">Без домашки: ${without.map(esc).join(", ")}</div>`;
-  });
-
-  const aside = dayScheduleCard(f.date, `Уроки: ${esc(r.toLowerCase())}`) + recentMarksCard(5);
-  return [out, aside];
+  const past = all.filter((d) => d.date < focus).slice(-5), upcoming = all.filter((d) => d.date >= focus).slice(0, 6);
+  let out = "";
+  if (past.length) out += `<button class="pastbtn" data-past>${showPast ? "Скрыть прошлые дни ↓" : "↑ Показать прошлые дни"}</button>`;
+  if (showPast) out += past.map((d) => dayCard(d, done, focus)).join("");
+  out += upcoming.map((d) => dayCard(d, done, focus)).join("");
+  return [out, recentMarksCard(5)];
 }
 
 // ---------- Как дела (по её собственным оценкам) ----------
@@ -467,12 +529,15 @@ document.addEventListener("click", (e) => {
   if (tabBtn) { tab = tabBtn.dataset.tab; render(); window.scrollTo(0, 0); return; }
   const check = e.target.closest(".check");
   if (check) {
-    const card = check.closest(".hw"), done = store.get("done", {}), k = card.dataset.key;
+    const strip = check.closest(".strip"), done = store.get("done", {}), k = strip.dataset.key;
     done[k] ? delete done[k] : (done[k] = 1);
     store.set("done", done);
     const y = window.scrollY; render(); window.scrollTo(0, y);
     return;
   }
+  if (e.target.closest("[data-past]")) { showPast = !showPast; render(); return; }
+  const head = e.target.closest("[data-toggle]");
+  if (head) { head.parentElement.classList.toggle("open"); return; }
   const nav = e.target.closest("[data-nav]");
   if (nav) {
     const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
