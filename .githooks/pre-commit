@@ -1,10 +1,3 @@
 #!/bin/sh
-# Не даёт случайно закоммитить личные данные ребёнка и сохранённый вход.
-bad=$(git diff --cached --name-only | grep -E '(^|/)(data/|session\.json$|ids\.json$|diary\.json$|history\.json$|config\.json$)')
-if [ -n "$bad" ]; then
-  echo "СТОП: в коммит попали личные данные:"; echo "$bad"; exit 1
-fi
-if git diff --cached -U0 -- . ':!.githooks' ':!tests' | grep -E '^\+' | grep -q -E 'DnevnikAuth|dnevnik_sst|a_r_p_i'; then
-  echo "СТОП: в изменениях похоже на cookie входа в Дневник.ру"; exit 1
-fi
-exit 0
+# Не даёт случайно закоммитить личные данные ребёнка, сохранённый вход, ключи и токены.
+exec ./scripts/check-secrets.sh staged

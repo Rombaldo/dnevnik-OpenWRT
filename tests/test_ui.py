@@ -108,6 +108,33 @@ class UiSmokeTests(unittest.TestCase):
         page.close()
         self.assertEqual(errors, [])
 
+    def test_untrusted_text_is_escaped(self):
+        """Тексты приходят от учителей и с сайта: теги в них не должны выполняться."""
+        evil = '<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>'
+        from dev.sample import make_sample
+        d = make_sample()
+        for day in d["days"]:
+            for l in day["lessons"]:
+                l["homework"], l["theme"], l["subject"], l["start"] = evil, evil, "Рус. " + evil, evil
+                l["n"] = evil
+                l["marks"] = [{"value": evil, "work": evil, "created": "2026-11-10T10:00:00"}]
+                l["files"] = [{"id": "1", "name": evil, "ext": evil, "size": 1, "url": 'https://b5.csdnevnik.ru/a"onmouseover="window.__pwned=1'}]
+        d["status"] = {"needLogin": False, "error": None, "syncing": False}
+        d["config"] = {"name": evil}
+        d["version"] = evil
+        ctx = self.browser.new_context(viewport={"width": 375, "height": 812})
+        page = ctx.new_page()
+        page.route("**/data.json", lambda route: route.fulfill(json=d))
+        page.goto(self.url)
+        page.wait_for_selector("nav.tabs")
+        for tab in ("hw", "marks", "plan"):
+            page.click(f'nav.tabs button[data-tab="{tab}"]')
+            page.wait_for_timeout(150)
+            page.hover("body")
+        self.assertIsNone(page.evaluate("window.__pwned"))
+        self.assertEqual(page.eval_on_selector_all("#main img, #main script, header img, header script", "e => e.length"), 0)
+        page.close()
+
     def test_attachment_link_and_lesson_details(self):
         page, errors = self.open(375, 812)
         link = page.query_selector("a.file")

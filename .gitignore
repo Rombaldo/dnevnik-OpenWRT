@@ -6,3 +6,10 @@ __pycache__/
 *.pyc
 .DS_Store
 *.log
+.env
+*.pem
+*.key
+*.token
+.dnevnik-token
+*router_key*
+known_hosts

@@ -82,13 +82,23 @@ def norm_day(d):
 
 
 # ---------------------------------------------------------------- cookie входа
-def load_jar(path):
+def keep_cookie(c, also=None):
+    """Нужны только cookie самого Дневника.ру. Всё остальное, что браузер насобирал при входе
+    (Госуслуги, Яндекс и т.д.), мы не храним и никуда не отправляем.
+    also - ещё один разрешённый адрес (нужен только тестам с поддельным сайтом)."""
+    dom = (c.get("domain") if isinstance(c, dict) else c.domain).lstrip(".").lower()
+    return dom == "dnevnik.ru" or dom.endswith(".dnevnik.ru") or (also is not None and dom == also)
+
+
+def load_jar(path, also=None):
     """Читает cookie из session.json (формат Playwright) в обычный CookieJar."""
     p = Path(path)
     if not p.exists():
         raise NeedLogin("нет сохранённого входа")
     jar = http.cookiejar.CookieJar()
     for c in json.loads(p.read_text()):
+        if not keep_cookie(c, also):
+            continue
         dom = c["domain"]
         exp = int(c["expires"]) if c.get("expires", -1) and c["expires"] > 0 else None
         rest = {"HttpOnly": None} if c.get("httpOnly") else {}
@@ -98,10 +108,12 @@ def load_jar(path):
     return jar
 
 
-def jar_to_list(jar):
+def jar_to_list(jar, also=None):
     now = time.time()
     out = []
     for c in jar:
+        if not keep_cookie(c, also):
+            continue
         out.append({
             "name": c.name, "value": c.value, "domain": c.domain, "path": c.path,
             "expires": c.expires if c.expires else now + COOKIE_LIFETIME,   # сессионные куки делаем «долгими»
@@ -200,6 +212,8 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
     session_save_hours: как часто перезаписывать session.json (на роутере экономим флеш-память)
     """
     data_dir = Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(data_dir, 0o700)   # тут вход и личные данные: чужим пользователям компьютера не видно
     today = today or date.today()
     cfg = read_json(config_path, {}) if config_path else {}
     version = Path(version_path).read_text().strip() if version_path and Path(version_path).exists() else None
@@ -215,7 +229,8 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
         ids = read_json(data_dir / "ids.json", None)
         if not ids:
             raise NeedLogin("нет сведений об ученике (нужен вход)")
-        jar = load_jar(session_path)
+        extra = urlparse(base).hostname if base != BASE else None   # у настоящего сайта разрешён только Дневник.ру
+        jar = load_jar(session_path, also=extra)
         client = Client(jar, base=base)
         if history:
             first = today - timedelta(days=14)
@@ -239,7 +254,7 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
         write_private(history_path, json.dumps(history, ensure_ascii=False))     # пишем, только если что-то изменилось
     age_h = (time.time() - session_path.stat().st_mtime) / 3600 if session_path.exists() else 1e9
     if age_h >= session_save_hours:
-        write_private(session_path, json.dumps(jar_to_list(jar), ensure_ascii=False))
+        write_private(session_path, json.dumps(jar_to_list(jar, also=extra), ensure_ascii=False))
     payload = public_payload(history, datetime.now().isoformat(timespec="seconds"),
                              {"needLogin": False, "error": None, "syncing": False}, cfg, version)
     write_public(out_path, payload)

@@ -28,15 +28,15 @@ NeedLogin = core.NeedLogin
 def launch(p, headless):
     """Свой Chromium от Playwright; если его нет - Яндекс.Браузер (он на Chromium)."""
     try:
-        return p.chromium.launch(headless=headless)
+        return p.chromium.launch(headless=headless, chromium_sandbox=True)   # окно с Госуслугами - в песочнице
     except Exception:
         if os.path.exists(YANDEX):
-            return p.chromium.launch(headless=headless, executable_path=YANDEX)
+            return p.chromium.launch(headless=headless, executable_path=YANDEX, chromium_sandbox=True)
         raise
 
 
 def save_cookies(ctx):
-    cookies = ctx.cookies()
+    cookies = [c for c in ctx.cookies() if core.keep_cookie(c)]   # только Дневник.ру, без Госуслуг и Яндекса
     now = time.time()
     for c in cookies:
         if c.get("expires", -1) in (-1, None) or c["expires"] < 0:

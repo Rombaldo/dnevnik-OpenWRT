@@ -344,7 +344,7 @@ function dayScheduleCard(date, title) {
   const now = new Date(), isToday = date === todayIso(), mins = now.getHours() * 60 + now.getMinutes();
   return `${title ? `<h2>${title}</h2>` : ""}<div class="card">${day.lessons.map((l) => {
     const s = subj(l.subject), on = isToday && !l.canceled && mins >= hhmm(l.start) && mins < hhmm(l.end);
-    return `<div class="lesson ${l.canceled ? "off" : ""} ${on ? "now" : ""}" style="${s.style}"><div class="n">${l.n}</div>
+    return `<div class="lesson ${l.canceled ? "off" : ""} ${on ? "now" : ""}" style="${s.style}"><div class="n">${esc(l.n)}</div>
       <div class="ic">${s.icon}</div>
       <div class="t"><b>${esc(l.subject)}${on ? '<span class="now-tag">идёт сейчас</span>' : ""}</b>
         <span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · отменён" : ""}</span>${l.theme ? `<span class="theme">${esc(l.theme)}</span>` : ""}</div>
@@ -384,7 +384,7 @@ function dayCard(d, done, focusId) {
         <button class="check" aria-label="Сделано">✓</button></div>` : "";
     return `<div class="lesson2 ${l.canceled ? "off" : ""}" style="${s.style}">
       <div class="lhead" data-toggle><span class="lic">${s.icon}</span>
-        <div class="lt"><b>${l.n}. ${esc(l.subject)}</b><span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · урок отменён" : ""}</span></div>
+        <div class="lt"><b>${esc(l.n)}. ${esc(l.subject)}</b><span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · урок отменён" : ""}</span></div>
         ${l.marks.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}<span class="chev">›</span></div>
       <div class="ldetails">${l.theme ? `<b>Тема урока:</b> ${esc(l.theme)}` : "Тема урока пока не указана"}</div>
       ${strip}</div>`;
