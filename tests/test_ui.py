@@ -521,7 +521,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertEqual(page.is_visible(".att-day"), False)                           # дни свёрнуты
         page.click(".att summary")
         days = page.inner_text(".att details")
-        self.assertIn("6 окт", days)
+        self.assertIn("6 октября", days)
         self.assertIn("уроки 1–5", days)                                               # подряд идущие уроки сжаты
         self.assertIn("Опоздание", days)
         self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376)
@@ -971,6 +971,20 @@ class UiSmokeTests(unittest.TestCase):
             missedDays([{date: 'a', kind: 'ill'}, {date: 'b', kind: 'late'}])]"""), [0, 0, 2, 0, 1])
         self.assertEqual(page.evaluate("lessonsAndDays(8, 0)"), "8 уроков")                       # старые данные без дней: как раньше
         self.assertIn("(3 дня)", page.evaluate("lessonsAndDays(8, 3)"))
+
+
+    def test_months_and_weekdays_are_written_in_full(self):
+        page, errors = self.open_ctx()
+        text = page.inner_text("#main") + page.inner_text("header")
+        for short in ("нояб.", "окт.", "дек.", "сен.", "янв.", "фев.", "апр.", "авг."):
+            self.assertNotIn(short, text)
+        self.assertRegex(page.inner_text(".dtitle"), r"^[а-я]{6,11}, \d{1,2} [а-я]{3,8}")        # «четверг, 12 ноября», не «чт, 12 нояб.»
+        self.assertRegex(page.inner_text("#updated"), r"Обновлено \d{1,2} [а-я]{3,8} в")
+        page.click('nav.tabs button[data-tab="plan"]')
+        self.assertNotRegex(page.inner_text(".nav .ttl small"), r"\.")
+        page.click('nav.tabs button[data-tab="marks"]')
+        self.assertNotIn(".", page.inner_text(".row .t span").split("·")[0])
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

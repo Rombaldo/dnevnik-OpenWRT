@@ -382,7 +382,7 @@ window.__DATA__ = /*INLINE_DATA*/null;   // сервер подставляет 
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const MONTHS = ["янв.", "фев.", "мар.", "апр.", "мая", "июн.", "июл.", "авг.", "сен.", "окт.", "нояб.", "дек."];
+const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];   // месяцы пишем полностью
 const WD = { пн: "понедельник", вт: "вторник", ср: "среда", чт: "четверг", пт: "пятница", сб: "суббота", вс: "воскресенье" };
 
 // Иконка и цвет каждого предмета
@@ -739,7 +739,7 @@ function dayCard(d, done, focusId, paged = false) {
       ${strip}</div>`;
   }).join("");
   return `<section class="day ${allDone ? "all-done" : ""}" ${d.date === focusId ? 'id="focus-day"' : ""}>
-    ${paged ? "" : `<div class="dtitle">${esc(d.weekday)}, ${dayName(d.date)}${rr ? ` <span class="rel">${rr}</span>` : ""}</div>`}
+    ${paged ? "" : `<div class="dtitle">${esc(WD[d.weekday] ?? d.weekday)}, ${dayName(d.date)}${rr ? ` <span class="rel">${rr}</span>` : ""}</div>`}
     <div class="dprog"><span class="dpi">☑</span>${total
       ? `<b>${dn}/${total}</b> <span>${label}</span>` : `<span>Домашки нет 🎉</span>`}</div>
     ${total ? `<div class="bar"><i style="width:${Math.round((dn / total) * 100)}%"></i></div>` : ""}
@@ -836,7 +836,7 @@ function currentAttendanceCard() {
 
 // ---------- Экран «Посещаемость»: календарь по дням ----------
 const MONTHS_FULL = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
-const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+const MONTHS_GEN = MONTHS;
 const WD_FULL = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
 let attDay = null, attTerm = {};
 
