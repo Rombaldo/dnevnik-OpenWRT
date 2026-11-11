@@ -133,7 +133,7 @@ class SecretScannerTests(unittest.TestCase):
         self.add("a.py", 'c = {"DnevnikAuth_a": "' + "a1b2" * 8 + '"}\n')
         self.assertEqual(self.scan()[0], 1)
         self.git("reset", "-q")
-        self.add("b.py", "personId = 1000022123456\n")
+        self.add("b.py", "personId = 9999999999999\n")
         self.assertEqual(self.scan()[0], 1)
 
     def test_history_scan_finds_old_leak(self):
