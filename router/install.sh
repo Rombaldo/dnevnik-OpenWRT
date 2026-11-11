@@ -101,8 +101,20 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 [ "$OK" = "1" ] || die "версия установлена, но страница на порту 8765 не отвечает: смотрите logread | tail"
 
+DOMAIN=$(uci -q get dhcp.@dnsmasq[0].domain); DOMAIN="${DOMAIN:-lan}"
+LANIP=$(uci -q get network.lan.ipaddr | cut -d/ -f1)
+NAME_OK=0
+for i in 1 2 3 4 5; do
+    nslookup "dnevnik.$DOMAIN" 127.0.0.1 2>/dev/null | grep -q "$LANIP" && { NAME_OK=1; break; }
+    sleep 1
+done
+
 say "Готово: версия $NEW."
 if [ ! -s "$APP/data/credentials.json" ] && [ ! -s "$APP/data/session.json" ]; then
     echo "    Осталось один раз ввести логин и пароль от Дневник.ру: откройте страницу ниже на телефоне и заполните форму."
 fi
-echo "    Страница: http://$(uci -q get network.lan.ipaddr | cut -d/ -f1):8765"
+if [ "$NAME_OK" = "1" ]; then
+    echo "    Страница: http://dnevnik.$DOMAIN   (запасной адрес: http://$LANIP:8765)"
+else
+    echo "    Страница: http://$LANIP:8765   (имя dnevnik.$DOMAIN пока не заработало: выключите на телефоне «Частный DNS»/«Защищённый DNS» или пользуйтесь адресом с цифрами)"
+fi

@@ -232,13 +232,58 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIsNotNone(page.query_selector(".day"))                # старые данные остаются под формой
         self.assertEqual(errors, [])
 
-    def test_change_login_link_when_everything_works(self):
+    def click_change_login(self, page):
+        page.click("button.linkbtn[data-change-login]")
+        page.wait_for_selector(".modal")
+
+    def test_change_login_needs_two_confirmations(self):
         page, errors = self.open(375, 812)
-        page.click("button.linkbtn[data-setup]")
+        self.click_change_login(page)
+        self.assertIn("Сменить логин и пароль?", page.inner_text(".modal h3"))
+        self.assertIn("Отмена", page.inner_text(".modal .safe"))
+        self.assertIsNone(page.query_selector("#setup-form"))                  # после одного нажатия формы ещё нет
+        page.click('[data-confirm="yes"]')                                      # первое подтверждение
+        self.assertIn("точно", page.inner_text(".modal h3").lower())           # второй, другой вопрос
+        self.assertIsNone(page.query_selector("#setup-form"))
+        self.assertTrue(page.is_disabled('[data-confirm="yes"]'))              # кнопка не нажимается сразу: защита от двойного тапа
+        page.click('[data-confirm="yes"]', force=True)
+        self.assertIsNone(page.query_selector("#setup-form"))                  # нажатие на выключенную кнопку ничего не делает
+        page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=6000)
+        page.click('[data-confirm="yes"]')                                      # второе подтверждение
         page.wait_for_selector("#setup-form")
+        self.assertIsNone(page.query_selector(".modal"))
         self.assertEqual(page.input_value("#s-pass"), "")
-        page.click("button[data-setup]") if page.query_selector("button[data-setup]") else None
         self.assertEqual(errors, [])
+
+    def test_cancel_at_any_step_keeps_everything_as_is(self):
+        page, errors = self.open(375, 812)
+        self.click_change_login(page)
+        page.click('[data-confirm="no"]')                                       # отмена на первом окне
+        self.assertIsNone(page.query_selector(".modal"))
+        self.assertIsNone(page.query_selector("#setup-form"))
+        self.click_change_login(page)
+        page.click('[data-confirm="yes"]')
+        page.click('[data-confirm="no"]')                                       # отмена на втором окне
+        self.assertIsNone(page.query_selector(".modal"))
+        self.assertIsNone(page.query_selector("#setup-form"))
+        self.assertIsNotNone(page.query_selector(".day"))                        # дневник на месте
+        self.assertEqual(errors, [])
+
+    def test_escape_and_backdrop_cancel(self):
+        page, errors = self.open(375, 812)
+        self.click_change_login(page)
+        page.keyboard.press("Escape")
+        self.assertIsNone(page.query_selector(".modal"))
+        self.click_change_login(page)
+        page.mouse.click(5, 5)                                                   # нажатие мимо окна
+        self.assertIsNone(page.query_selector(".modal"))
+        self.assertIsNone(page.query_selector("#setup-form"))
+        self.assertEqual(errors, [])
+
+    def test_safe_button_is_focused_by_default(self):
+        page, _ = self.open(375, 812)
+        self.click_change_login(page)
+        self.assertEqual(page.evaluate("document.activeElement.className"), "safe")   # Enter по умолчанию = отмена
 
     def test_offline_copy_has_no_login_form(self):
         ctx = self.browser.new_context()

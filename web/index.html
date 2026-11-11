@@ -14,7 +14,7 @@
 <style>
   :root {
     --bg: #f2f4ff; --card: #ffffff; --ink: #1c2236; --muted: #667089; --line: #e6e9f6;
-    --brand: #5468f0; --brand-2: #8a5cf6; --brand-soft: #e9edff; --ok: #1f9d55; --ok-soft: #e0f6e9;
+    --brand: #5468f0; --brand-ink: #ffffff; --brand-2: #8a5cf6; --brand-soft: #e9edff; --ok: #1f9d55; --ok-soft: #e0f6e9;
     --shadow: 0 1px 2px rgba(40,50,110,.06), 0 6px 18px rgba(40,50,110,.06);
     --m5: #1fa55b; --m4: #6cc04a; --m3: #f2a516; --m2: #ee6a3c; --m1: #dc3b45; --mx: #8b94ab;
     --banner-warn-bg: #fff3d6; --banner-warn-ink: #6a4700; --banner-bad-bg: #ffe3e3; --banner-bad-ink: #7d1d1d;
@@ -23,7 +23,7 @@
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #10131e; --card: #1a1f31; --ink: #eef1fb; --muted: #9aa3bd; --line: #2a3048;
-      --brand: #7c8fff; --brand-2: #a583ff; --brand-soft: #232b55; --ok: #46c27a; --ok-soft: #173525;
+      --brand: #7c8fff; --brand-ink: #10131e; --brand-2: #a583ff; --brand-soft: #232b55; --ok: #46c27a; --ok-soft: #173525;
       --shadow: 0 1px 2px rgba(0,0,0,.3);
       --banner-warn-bg: #3a2f12; --banner-warn-ink: #ffd9a0; --banner-bad-bg: #3b1a1a; --banner-bad-ink: #ffbcbc;
       --banner-info-bg: #1d2850; --banner-info-ink: #c7d4ff;
@@ -233,6 +233,17 @@
   .fin .dash { color: var(--muted); }
   .fin .avgc { text-align: center; font-weight: 700; font-size: 15px; }
   .rowline { grid-column: 1 / -1; height: 1px; background: var(--line); margin: 2px 0; }
+
+  /* ---- окно подтверждения (смена входа) ---- */
+  .modal-back { position: fixed; inset: 0; z-index: 60; background: rgba(15,20,40,.62); display: flex; align-items: center; justify-content: center; padding: 18px; }
+  .modal { background: var(--card); color: var(--ink); border-radius: 24px; padding: 22px 20px 18px; max-width: 440px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+  .modal h3 { margin: 0 0 8px; font-size: 21px; line-height: 1.25; }
+  .modal p { margin: 0 0 18px; color: var(--muted); font-size: 17px; }
+  .mbtns { display: grid; gap: 10px; }
+  .mbtns button { min-height: 56px; border: 0; border-radius: 16px; font-size: 18px; font-weight: 800; }
+  .mbtns .safe { background: var(--brand); color: var(--brand-ink); }
+  .mbtns .danger { background: var(--banner-bad-bg); color: var(--banner-bad-ink); }
+  .mbtns .danger:disabled { opacity: .55; }
   .empty { text-align: center; color: var(--muted); padding: 50px 10px; background: var(--card); border-radius: 22px; box-shadow: var(--shadow); }
   .empty .em { font-size: 54px; display: block; margin-bottom: 6px; }
 
@@ -252,6 +263,7 @@
   </div>
 </header>
 <main id="main"></main>
+<div id="modal"></div>
 <nav class="tabs">
   <button data-tab="hw" class="on"><span class="e">📝</span>Домашка</button>
   <button data-tab="marks"><span class="e">⭐</span>Оценки</button>
@@ -328,7 +340,7 @@ function setupCard() {
   const msg = setupMsg ? `<div class="msg ${setupMsg.ok ? "good" : "bad"}">${esc(setupMsg.text)}</div>`
     : (err && data?.status?.needLogin ? `<div class="msg bad">${esc(err)}</div>` : "");
   return `<div class="card setup"><h2>Вход в Дневник.ру</h2>
-    <p>Введите логин и пароль ученика от Дневник.ру. Вводить нужно один раз: дальше дневник будет обновляться сам.</p>
+    <p>Введите логин и пароль ученика от <b>Дневник.ру</b> (это не логин и пароль от Госуслуг). Вводить нужно один раз: дальше дневник будет обновляться сам.</p>
     <form id="setup-form" autocomplete="on">
       <label for="s-login">Логин</label>
       <input id="s-login" name="login" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(setupLogin)}">
@@ -337,8 +349,9 @@ function setupCard() {
       <button class="go" type="submit">Войти</button>
     </form>${msg}
     <details><summary>Где взять логин и пароль?</summary>
-      <p>На сайте dnevnik.ru войдите в профиль ученика: «Настройки» → «Логин и пароль». Там написан логин. Если пароль неизвестен,
-      его можно заменить кнопкой «Изменить» на той же странице (а потом ввести новый здесь).</p></details>
+      <p>Войдите на dnevnik.ru, как обычно (хоть через Госуслуги), откройте профиль ученика: «Настройки» → «Логин и пароль». Там написан логин.
+      Пароль от Дневник.ру отдельный: если его не знаете, задайте новый кнопкой «Изменить» на той же странице и введите здесь.
+      Пароль от Госуслуг вводить сюда не нужно.</p></details>
     <p class="fine">Пароль хранится только на вашем роутере, в закрытом файле. Он нужен, чтобы дневник сам входил заново, когда вход на сайте истекает.</p></div>`;
 }
 
@@ -366,6 +379,27 @@ async function submitSetup(form) {
   setupWait = false; showSetup = false; setupMsg = null; setupLogin = "";
   load();
 }
+
+
+// ---------- Смена логина и пароля: два подтверждения подряд, чтобы нельзя было нажать случайно ----------
+let confirmStep = 0, confirmReadyAt = 0;
+function confirmModal() {
+  if (!confirmStep) return "";
+  const who = data?.student?.name ? `дневник ${esc(data.student.name)}` : "дневник";
+  const first = confirmStep === 1;
+  const wait = Math.max(0, Math.ceil((confirmReadyAt - Date.now()) / 1000));
+  return `<div class="modal-back" data-modal-back><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mtitle">
+    <h3 id="mtitle">${first ? "Сменить логин и пароль?" : "Вы точно хотите выйти из этого аккаунта?"}</h3>
+    <p>${first
+      ? `Сейчас ${who} работает. Если ввести другой логин и пароль, откроется уже другой ученик. Сменить вход?`
+      : `Показывать ${who} перестанет, пока вы не введёте новый вход. Если нажали случайно, выберите «Нет, оставить как есть».`}</p>
+    <div class="mbtns">
+      <button class="safe" data-confirm="no">${first ? "Отмена" : "Нет, оставить как есть"}</button>
+      <button class="danger" data-confirm="yes" ${first || !wait ? "" : "disabled"}>${first ? "Да, сменить" : (wait ? `Да, выйти (подождите ${wait})` : "Да, выйти и ввести другой")}</button>
+    </div></div></div>`;
+}
+function closeConfirm() { confirmStep = 0; render(); }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && confirmStep) closeConfirm(); });
 
 function statusBanner() {
   let h = banner;
@@ -409,7 +443,13 @@ function render() {
     const [main, aside] = tab === "hw" ? viewHw() : tab === "marks" ? viewMarks() : viewPlan();
     body = `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
   }
-  const changeLogin = !window.__DATA__ && data?.status && !showSetup && !needSetup ? `<button class="linkbtn" data-setup>Сменить логин и пароль</button>` : "";
+  const changeLogin = !window.__DATA__ && data?.status && !showSetup && !needSetup ? `<button class="linkbtn" data-change-login>Сменить логин и пароль</button>` : "";
+  $("#modal").innerHTML = confirmModal();
+  if (confirmStep) {
+    const safe = document.querySelector("#modal .safe");
+    if (safe && document.activeElement !== safe) safe.focus();                    // по умолчанию выбрана безопасная кнопка
+    if (confirmStep === 2 && confirmReadyAt > Date.now()) setTimeout(() => { if (confirmStep === 2) render(); }, 500);
+  }
   $("#main").innerHTML = (showSetup && !setupWait ? "" : statusBanner()) + body + changeLogin + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
 }
 
@@ -624,6 +664,14 @@ document.addEventListener("submit", (e) => {
 });
 
 document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-change-login]")) { confirmStep = 1; render(); return; }
+  const cf = e.target.closest("[data-confirm]");
+  if (cf) {
+    if (cf.dataset.confirm === "no" || cf.disabled) { if (cf.dataset.confirm === "no") closeConfirm(); return; }
+    if (confirmStep === 1) { confirmStep = 2; confirmReadyAt = Date.now() + 2000; render(); return; }
+    confirmStep = 0; showSetup = true; setupMsg = null; render(); window.scrollTo(0, 0); return;     // второе подтверждение
+  }
+  if (e.target.matches("[data-modal-back]")) { closeConfirm(); return; }
   if (e.target.closest("[data-setup]")) { showSetup = !showSetup; setupMsg = null; render(); window.scrollTo(0, 0); return; }
   const mv = e.target.closest("[data-mview]");
   if (mv) { marksView = mv.dataset.mview; render(); return; }

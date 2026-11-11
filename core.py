@@ -405,7 +405,7 @@ def login_with_password(login, password, login_url=LOGIN_URL, base=BASE, timeout
         raise LoginFailed("captcha", "Сайт просит ввести картинку-капчу. Один раз войдите на dnevnik.ru в браузере "
                                      "(введите капчу), потом повторите здесь.")
     if "Ошибка в логине или пароле" in body or 'name="password"' in body:
-        raise LoginFailed("wrong", "Неверный логин или пароль.")
+        raise LoginFailed("wrong", "Неверный логин или пароль. Нужны логин и пароль самого Дневник.ру, не Госуслуг: если пароля нет, задайте его в профиле на dnevnik.ru (Настройки → Логин и пароль → Изменить).")
     raise LoginFailed("unknown", "Сайт не принял вход. Попробуйте позже.")
 
 
