@@ -193,6 +193,26 @@
   a.file:active { filter: brightness(.95); }
   .pastbtn { display: block; width: 100%; margin: 0 0 14px; padding: 14px; border: 0; border-radius: 18px; background: rgba(255,255,255,.28); color: #fff; font-weight: 700; font-size: 16px; }
   @media (prefers-color-scheme: light) { body.feed .aside h2 { color: #fff; } }
+
+  /* ---- вход в Дневник.ру ---- */
+  .setup { padding: 20px 18px; }
+  .setup h2 { margin: 0 0 6px; font-size: 22px; }
+  .setup p { margin: 6px 0 14px; color: var(--muted); font-size: 16px; }
+  .setup label { display: block; font-weight: 700; font-size: 16px; margin: 12px 0 6px; }
+  .setup input { width: 100%; min-height: 54px; padding: 10px 14px; font-size: 20px; border-radius: 14px; border: 2px solid var(--line);
+    background: var(--bg); color: var(--ink); }
+  .setup input:focus { outline: none; border-color: var(--brand); }
+  .setup button.go { width: 100%; min-height: 58px; margin-top: 18px; border: 0; border-radius: 16px; background: var(--brand); color: var(--brand-ink);
+    font-size: 20px; font-weight: 800; }
+  .setup button.go:disabled { opacity: .6; }
+  .setup .msg { margin-top: 14px; padding: 12px 14px; border-radius: 14px; font-size: 16px; }
+  .setup .msg.bad { background: var(--banner-bad-bg); color: var(--banner-bad-ink); }
+  .setup .msg.good { background: var(--ok-soft); color: var(--ok); font-weight: 700; }
+  .setup details { margin-top: 16px; color: var(--muted); font-size: 15px; }
+  .setup summary { cursor: pointer; font-weight: 700; color: var(--brand); }
+  .setup .fine { margin: 14px 0 0; font-size: 13px; }
+  .banner button { margin-top: 8px; padding: 10px 16px; border: 0; border-radius: 12px; background: var(--brand); color: var(--brand-ink); font-weight: 700; font-size: 16px; }
+  .linkbtn { display: block; margin: 18px auto 0; background: none; border: 0; color: var(--muted); font-size: 13px; text-decoration: underline; }
   .empty { text-align: center; color: var(--muted); padding: 50px 10px; background: var(--card); border-radius: 22px; box-shadow: var(--shadow); }
   .empty .em { font-size: 54px; display: block; margin-bottom: 6px; }
 
@@ -279,10 +299,58 @@ async function load() {
   render();
 }
 
+
+// ---------- Вход в Дневник.ру (логин и пароль вводятся здесь, хранятся только на роутере) ----------
+let showSetup = false, setupLogin = "", setupMsg = null, setupWait = false;
+function setupCard() {
+  const err = data?.status?.error;
+  if (setupWait) return `<div class="card setup"><h2>Вход в Дневник.ру</h2><div class="msg good">${esc(setupMsg?.text || "Загружаю дневник…")}</div></div>`;
+  const msg = setupMsg ? `<div class="msg ${setupMsg.ok ? "good" : "bad"}">${esc(setupMsg.text)}</div>`
+    : (err && data?.status?.needLogin ? `<div class="msg bad">${esc(err)}</div>` : "");
+  return `<div class="card setup"><h2>Вход в Дневник.ру</h2>
+    <p>Введите логин и пароль ученика от Дневник.ру. Вводить нужно один раз: дальше дневник будет обновляться сам.</p>
+    <form id="setup-form" autocomplete="on">
+      <label for="s-login">Логин</label>
+      <input id="s-login" name="login" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(setupLogin)}">
+      <label for="s-pass">Пароль</label>
+      <input id="s-pass" name="password" type="password" autocomplete="current-password">
+      <button class="go" type="submit">Войти</button>
+    </form>${msg}
+    <details><summary>Где взять логин и пароль?</summary>
+      <p>На сайте dnevnik.ru войдите в профиль ученика: «Настройки» → «Логин и пароль». Там написан логин. Если пароль неизвестен,
+      его можно заменить кнопкой «Изменить» на той же странице (а потом ввести новый здесь).</p></details>
+    <p class="fine">Пароль хранится только на вашем роутере, в закрытом файле. Он нужен, чтобы дневник сам входил заново, когда вход на сайте истекает.</p></div>`;
+}
+
+async function submitSetup(form) {
+  const login = form.login.value.trim(), password = form.password.value;
+  setupLogin = login;
+  if (!login || !password) { setupMsg = { ok: false, text: "Введите логин и пароль." }; return render(); }
+  const btn = form.querySelector("button.go"); btn.disabled = true; btn.textContent = "Проверяю…";
+  let res;
+  try {
+    const r = await fetch("cgi-bin/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login, password }) });
+    res = await r.json();
+  } catch { res = { ok: false, message: "Не получилось связаться с роутером. Проверьте Wi-Fi и попробуйте снова." }; }
+  form.password.value = "";
+  setupMsg = { ok: !!res.ok, text: res.message || "Не получилось." };
+  if (!res.ok) return render();
+  setupWait = true; render();
+  for (let i = 0; i < 40; i++) {            // ждём до ~2.5 минут, пока дневник загрузится
+    await new Promise((r) => setTimeout(r, 4000));
+    try {
+      const d = await (await fetch("data.json", { cache: "no-store" })).json();
+      if (d.days?.length && !d.status?.needLogin) { data = d; store.set("cache", d); break; }
+    } catch {}
+  }
+  setupWait = false; showSetup = false; setupMsg = null; setupLogin = "";
+  load();
+}
+
 function statusBanner() {
   let h = banner;
   const s = data?.status;
-  if (s?.needLogin) h += `<div class="banner bad"><b>Нужно войти в Дневник.ру заново.</b> Попроси маму или папу: на компьютере запустить «Войти.command». Пока показываю старые данные.</div>`;
+  if (s?.needLogin && data?.days?.length) h += `<div class="banner bad"><b>Нужно войти в Дневник.ру заново.</b> ${esc(s.error || "")} Пока показываю старые данные.${window.__DATA__ ? "" : `<br><button data-setup>Ввести логин и пароль</button>`}</div>`;
   else if (s?.error) h += `<div class="banner warn">Не получилось обновить с сайта, показываю прошлые данные.</div>`;
   if (data?.updatedAt && !s?.needLogin && (Date.now() - new Date(data.updatedAt)) / 36e5 > 24)
     h += `<div class="banner warn">Данные не обновлялись больше суток.</div>`;
@@ -305,13 +373,21 @@ function render() {
   document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   document.body.classList.toggle("feed", tab === "hw");
   let body;
-  if (!data || !data.days?.length) {
+  const needSetup = !window.__DATA__ && data?.status?.needLogin && !data.days?.length;
+  if (needSetup || (showSetup && !window.__DATA__)) {
+    body = setupCard();
+    if (data?.days?.length) {
+      const [main, aside] = tab === "hw" ? viewHw() : tab === "marks" ? viewMarks() : viewPlan();
+      body += `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
+    }
+  } else if (!data || !data.days?.length) {
     body = `<div class="empty"><span class="em">⏳</span>Данные ещё загружаются.<br>Подожди пару минут и нажми «Обновить».</div>`;
   } else {
     const [main, aside] = tab === "hw" ? viewHw() : tab === "marks" ? viewMarks() : viewPlan();
     body = `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
   }
-  $("#main").innerHTML = statusBanner() + body + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
+  const changeLogin = !window.__DATA__ && data?.status && !showSetup && !needSetup ? `<button class="linkbtn" data-setup>Сменить логин и пароль</button>` : "";
+  $("#main").innerHTML = (showSetup && !setupWait ? "" : statusBanner()) + body + changeLogin + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
 }
 
 // ---------- помощники ----------
@@ -470,7 +546,12 @@ document.addEventListener("touchend", (e) => {
 }, { passive: true });
 
 // ---------- События ----------
+document.addEventListener("submit", (e) => {
+  if (e.target.id === "setup-form") { e.preventDefault(); submitSetup(e.target); }
+});
+
 document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-setup]")) { showSetup = !showSetup; setupMsg = null; render(); window.scrollTo(0, 0); return; }
   const tabBtn = e.target.closest("nav.tabs button");
   if (tabBtn) { tab = tabBtn.dataset.tab; render(); window.scrollTo(0, 0); return; }
   const check = e.target.closest(".check");

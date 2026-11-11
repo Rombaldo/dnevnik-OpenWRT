@@ -123,7 +123,7 @@ class SecretScannerTests(unittest.TestCase):
         self.assertEqual(self.scan()[0], 0)
 
     def test_data_files_are_caught_by_name(self):
-        for name in ["data/diary.json", "session.json", "x/ids.json", "config.json", "k.pem", "data/router_key", "known_hosts", ".env"]:
+        for name in ["data/diary.json", "session.json", "credentials.json", "x/login-state.json", "x/ids.json", "config.json", "k.pem", "data/router_key", "known_hosts", ".env"]:
             with self.subTest(name=name):
                 self.git("reset", "-q")
                 self.add(name)

@@ -15,6 +15,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import core
 import fetcher
 
 ROOT = Path(__file__).resolve().parent
@@ -26,7 +27,7 @@ INTERVAL = 20 * 60          # обновление раз в 20 минут
 NIGHT = (23, 6)             # ночью не ходим на сайт
 MIN_MANUAL_GAP = 120        # кнопка «Обновить» не чаще раза в 2 минуты
 
-state = {"needLogin": not fetcher.SESSION.exists(), "error": None, "lastTry": 0, "syncing": False}
+state = {"needLogin": not (fetcher.SESSION.exists() or (fetcher.DATA / "credentials.json").exists()), "error": None, "lastTry": 0, "syncing": False}
 wake = threading.Event()
 
 
@@ -99,6 +100,18 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path == "/cgi-bin/setup":   # тот же адрес, что и на роутере
+            if DEMO:   # демо-режим никогда не обращается к настоящему сайту
+                return self.send(200, json.dumps({"ok": False, "message": "Это демо: вход здесь не работает."}, ensure_ascii=False), MIME[".json"])
+            try:
+                payload = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 4096)).decode("utf-8"))
+                ok, message = core.setup_login(fetcher.DATA, payload.get("login"), payload.get("password"))
+            except Exception:
+                ok, message = False, "Не удалось прочитать данные формы."
+            if ok:
+                state["needLogin"], state["error"] = False, None
+                wake.set()
+            return self.send(200, json.dumps({"ok": ok, "message": message}, ensure_ascii=False), MIME[".json"])
         if self.path == "/cgi-bin/refresh":   # тот же адрес, что и на роутере
             if time.time() - state["lastTry"] >= MIN_MANUAL_GAP and not state["needLogin"]:
                 wake.set()

@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -78,26 +79,62 @@ class NormDayTests(unittest.TestCase):
 class FakeSite(http.server.BaseHTTPRequestHandler):
     good_token = "good"
     requests = 0
+    login_posts = 0
+    only_school = None          # если задано, дневник отдаёт уроки только для этой школы
+    captcha = False             # форма входа просит капчу
+    password = "secret"
 
     def log_message(self, *a):
         pass
 
+    def _send(self, code, body, ctype="text/html; charset=utf-8", headers=()):
+        raw = body if isinstance(body, bytes) else body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        for k, v in headers:
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def login_form(self, error=""):
+        captcha_id = "abc123" if FakeSite.captcha else ""
+        return (f'<form class="login" method="POST"><input type="hidden" name="exceededAttempts" value="False">'
+                f'<input type="hidden" name="ReturnUrl" value=""><input type="hidden" name="FingerprintId" value="">'
+                f'<input type="hidden" name="Captcha.Id" value="{captcha_id}"><input type="text" name="login">'
+                f'<input type="password" name="password"></form>{error}')
+
+    def do_POST(self):
+        FakeSite.login_posts += 1
+        form = urllib.parse.parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
+        if self.path.startswith("/login/") and form.get("login") == ["kate"] and form.get("password") == [FakeSite.password] and not FakeSite.captcha:
+            self._send(302, "", headers=[("Location", "/userfeed"),
+                                         ("Set-Cookie", f"DnevnikAuth_a={FakeSite.good_token}; Path=/; HttpOnly"),
+                                         ("Set-Cookie", "dnevnik_sst=fresh; Path=/; HttpOnly")])
+        else:
+            self._send(200, self.login_form('<div class="error">Ошибка в логине или пароле. Проверьте правильность заполнения полей.</div>'))
+
     def do_GET(self):
         FakeSite.requests += 1
-        if "/api/v2/marks/diary" not in self.path or f"DnevnikAuth_a={FakeSite.good_token}" not in (self.headers.get("Cookie") or ""):
-            self.send_response(401)
-            self.end_headers()
-            self.wfile.write(b"<html>login</html>")
-            return
+        path = self.path.split("?")[0]
+        if path == "/login/":
+            return self._send(200, self.login_form())
+        if path == "/userfeed":
+            return self._send(200, "<html>лента</html>")
+        authed = f"DnevnikAuth_a={FakeSite.good_token}" in (self.headers.get("Cookie") or "")
+        if path == "/marks":
+            if not authed:
+                return self._send(401, "<html>login</html>")
+            return self._send(200, '<a href="/statistics?childPersonId=1111111111">r</a> '
+                                   '<a href="/v2/homework?school=3333333333">x</a> <a href="/v2/homework?school=2222222222">y</a>')
+        if "/api/v2/marks/diary" not in self.path or not authed:
+            return self._send(401, "<html>login</html>")
+        if FakeSite.only_school and f"schoolId={FakeSite.only_school}" not in self.path:
+            return self._send(200, json.dumps({"days": []}), "application/json")
         att = {"text": "читать", "attachments": [{"fileId": "7", "fileName": "ГЕО", "fileExtension": "pdf", "size": 5,
                                                   "fileLink": "https://b5.csdnevnik.ru/geo.pdf"}]}
         body = json.dumps({"days": [raw_day([raw_lesson(homework=att)]), raw_day([raw_lesson()], day=(2026, 11, 12))]}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Set-Cookie", "dnevnik_sst=rotated; Path=/; Max-Age=86400; HttpOnly")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send(200, body, "application/json", headers=[("Set-Cookie", "dnevnik_sst=rotated; Path=/; Max-Age=86400; HttpOnly")])
 
 
 class SyncTests(unittest.TestCase):
@@ -113,6 +150,7 @@ class SyncTests(unittest.TestCase):
 
     def setUp(self):
         FakeSite.good_token = "good"
+        FakeSite.only_school, FakeSite.captcha, FakeSite.password, FakeSite.login_posts = None, False, "secret", 0
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.data, self.www = root / "data", root / "www"
@@ -217,6 +255,150 @@ class SyncTests(unittest.TestCase):
         self.assertFalse(saved["status"]["needLogin"])
         self.assertIn("500", saved["status"]["error"])
         self.assertEqual(len(saved["days"]), 2)
+
+
+class PasswordLoginTests(unittest.TestCase):
+    """Вход по логину и паролю (без Госуслуг и без Mac)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeSite)
+        cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def setUp(self):
+        FakeSite.good_token, FakeSite.only_school, FakeSite.captcha, FakeSite.password, FakeSite.login_posts = "good", None, False, "secret", 0
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.data, self.out = self.root / "data", self.root / "www" / "data.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def sync(self, **kw):
+        return core.sync(self.data, self.out, base=self.base, today=date(2026, 11, 11), **kw)
+
+    def setup(self, login="kate", password="secret"):
+        return core.setup_login(self.data, login, password, base=self.base)
+
+    # --- форма входа
+    def test_login_success_returns_session(self):
+        jar = core.login_with_password("kate", "secret", self.base + "/login/", self.base)
+        self.assertIn("DnevnikAuth_a", [c.name for c in jar])
+
+    def test_wrong_password_is_reported(self):
+        with self.assertRaises(core.LoginFailed) as cm:
+            core.login_with_password("kate", "nope", self.base + "/login/", self.base)
+        self.assertEqual(cm.exception.kind, "wrong")
+        self.assertIn("Неверный логин или пароль", str(cm.exception))
+
+    def test_captcha_is_reported_clearly(self):
+        FakeSite.captcha = True
+        with self.assertRaises(core.LoginFailed) as cm:
+            core.login_with_password("kate", "secret", self.base + "/login/", self.base)
+        self.assertEqual(cm.exception.kind, "captcha")
+
+    def test_no_connection_is_not_a_wrong_password(self):
+        with self.assertRaises(core.LoginFailed) as cm:
+            core.login_with_password("kate", "secret", "http://127.0.0.1:9/login/", "http://127.0.0.1:9")
+        self.assertEqual(cm.exception.kind, "network")
+
+    def test_hidden_fields_are_parsed(self):
+        html = '<input type="hidden" name="a.b" value="x&amp;y"><input name="t" type="text"><input value="9" name="z" type="hidden">'
+        self.assertEqual(core.parse_login_form(html), {"a.b": "x&y", "z": "9"})
+
+    def test_password_is_never_printed_in_messages(self):
+        for pw in ("nope-pass-123", ""):
+            ok, msg = self.setup(password=pw)
+            self.assertFalse(ok)
+            self.assertNotIn("nope-pass-123", msg)
+
+    # --- номера ученика и школы
+    def test_ids_are_found_and_the_right_school_is_picked(self):
+        FakeSite.only_school = "2222222222"          # у второй школы уроков нет
+        jar = core.login_with_password("kate", "secret", self.base + "/login/", self.base)
+        ids = core.discover_ids(core.Client(jar, base=self.base), today=date(2026, 11, 11))
+        self.assertEqual(ids, {"personId": "1111111111", "schoolId": "2222222222"})
+
+    # --- настройка со страницы
+    def test_setup_saves_login_and_loads_data(self):
+        ok, msg = self.setup()
+        self.assertTrue(ok, msg)
+        for f in ("credentials.json", "session.json", "ids.json"):
+            self.assertEqual(oct(os.stat(self.data / f).st_mode)[-3:], "600", f)
+        self.assertEqual(json.loads((self.data / "credentials.json").read_text()), {"login": "kate", "password": "secret"})
+        payload = self.sync()
+        self.assertEqual(len(payload["days"]), 2)
+
+    def test_failed_setup_saves_nothing_and_keeps_old_login(self):
+        self.assertTrue(self.setup()[0])
+        before = (self.data / "credentials.json").read_text()
+        ok, msg = self.setup(password="wrong")
+        self.assertFalse(ok)
+        self.assertEqual((self.data / "credentials.json").read_text(), before)     # рабочий вход не затёрт
+
+    def test_setup_rejects_empty_and_huge_input(self):
+        self.assertFalse(self.setup("", "x")[0])
+        self.assertFalse(self.setup("kate", "")[0])
+        self.assertFalse(self.setup("k" * 500, "x")[0])
+        self.assertFalse((self.data / "credentials.json").exists())
+
+    # --- автоматический вход при обновлении
+    def test_sync_logs_in_by_itself_when_session_expired(self):
+        self.assertTrue(self.setup()[0])
+        (self.data / "session.json").write_text("[]")           # вход «истёк»
+        payload = self.sync()
+        self.assertFalse(payload["status"]["needLogin"])
+        names = {c["name"] for c in json.loads((self.data / "session.json").read_text())}
+        self.assertIn("DnevnikAuth_a", names)                    # новый вход сохранён
+
+    def test_sync_logs_in_with_only_a_password_and_no_session(self):
+        self.assertTrue(self.setup()[0])
+        (self.data / "session.json").unlink()
+        (self.data / "ids.json").unlink()                        # даже номера ученика находит сам
+        payload = self.sync()
+        self.assertEqual(len(payload["days"]), 2)
+        self.assertTrue((self.data / "ids.json").exists())
+
+    def test_without_login_the_page_asks_for_it(self):
+        with self.assertRaises(core.NeedLogin):
+            self.sync()
+        saved = json.loads(self.out.read_text())
+        self.assertTrue(saved["status"]["needLogin"])
+        self.assertIn("логин и пароль", saved["status"]["error"])
+
+    def test_wrong_saved_password_is_not_retried_in_a_loop(self):
+        self.assertTrue(self.setup()[0])
+        FakeSite.password = "changed-on-site"                   # пароль на сайте сменили
+        (self.data / "session.json").write_text("[]")
+        with self.assertRaises(core.NeedLogin):
+            self.sync()
+        posts = FakeSite.login_posts
+        with self.assertRaises(core.NeedLogin):
+            self.sync()                                          # второй раз сайт не трогаем: чтобы не заблокировали
+        self.assertEqual(FakeSite.login_posts, posts)
+        self.assertTrue(json.loads(self.out.read_text())["status"]["needLogin"])
+        # человек ввёл новый пароль: повтор разрешён
+        FakeSite.password = "new-pass"
+        self.assertTrue(self.setup(password="new-pass")[0])
+        self.assertFalse(self.sync()["status"]["needLogin"])
+
+    def test_no_internet_on_relogin_is_an_error_not_a_login_request(self):
+        self.assertTrue(self.setup()[0])
+        (self.data / "session.json").write_text("[]")
+        with self.assertRaises(RuntimeError):
+            core.sync(self.data, self.out, base=self.base, today=date(2026, 11, 11), login_url="http://127.0.0.1:9/login/")
+        self.assertFalse(json.loads(self.out.read_text())["status"]["needLogin"])
+
+    def test_rebuild_with_saved_password_does_not_ask_for_login(self):
+        self.assertTrue(self.setup()[0])
+        (self.data / "session.json").unlink()
+        core.rebuild(self.data, self.out)
+        self.assertFalse(json.loads(self.out.read_text())["status"]["needLogin"])
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ MODE="${1:-staged}"
 FAIL=0
 
 # Файлы, которых в git быть не должно ни при каких условиях
-NAMES='(^|/)(data/|session\.json$|ids\.json$|diary\.json$|history\.json$|config\.json$|known_hosts$|\.env$|\.dnevnik-token$|[^/]*router_key[^/]*$|[^/]*\.pem$|[^/]*\.key$|[^/]*\.token$)'
+NAMES='(^|/)(data/|session\.json$|credentials\.json$|login-state\.json$|ids\.json$|diary\.json$|history\.json$|config\.json$|known_hosts$|\.env$|\.dnevnik-token$|[^/]*router_key[^/]*$|[^/]*\.pem$|[^/]*\.key$|[^/]*\.token$)'
 # Явные секреты (ищем везде)
 STRONG='BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|[Bb]earer +[A-Za-z0-9._-]{30,}'
 # Похоже на данные входа или ученика (в тестах выдуманные значения, там не ищем)

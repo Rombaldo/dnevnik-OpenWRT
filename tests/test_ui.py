@@ -1,6 +1,7 @@
 """Дымовой тест страницы в настоящем браузере: нет ошибок JavaScript, три вкладки рисуются."""
 import threading
 import unittest
+from pathlib import Path
 from datetime import date
 from http.server import ThreadingHTTPServer
 
@@ -134,6 +135,111 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIsNone(page.evaluate("window.__pwned"))
         self.assertEqual(page.eval_on_selector_all("#main img, #main script, header img, header script", "e => e.length"), 0)
         page.close()
+
+    # ---- вход по логину и паролю
+    def mocked(self, data, setup=None):
+        ctx = self.browser.new_context(viewport={"width": 375, "height": 812})
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.route("**/data.json", lambda route: route.fulfill(json=data() if callable(data) else data))
+        if setup:
+            page.route("**/cgi-bin/setup", setup)
+        page.goto(self.url)
+        return page, errors
+
+    def first_run_data(self, error="Введите логин и пароль от Дневник.ру."):
+        return {"updatedAt": None, "days": [], "status": {"needLogin": True, "error": error, "syncing": False}, "config": {}, "version": "t"}
+
+    def test_first_run_shows_login_form(self):
+        page, errors = self.mocked(self.first_run_data())
+        page.wait_for_selector("#setup-form")
+        self.assertEqual(page.get_attribute("#s-pass", "type"), "password")
+        self.assertEqual(page.get_attribute("#s-login", "autocomplete"), "username")
+        text = page.inner_text("#main")
+        self.assertIn("логин и пароль", text.lower())
+        self.assertNotIn("ещё загружаются", text)
+        self.assertEqual(errors, [])
+
+    def test_wrong_password_message_and_password_is_not_kept(self):
+        import json as _json
+        posted = []
+
+        def setup(route):
+            posted.append(_json.loads(route.request.post_data))
+            route.fulfill(json={"ok": False, "message": "Неверный логин или пароль."})
+
+        page, errors = self.mocked(self.first_run_data(), setup)
+        page.wait_for_selector("#setup-form")
+        page.fill("#s-login", "kate")
+        page.fill("#s-pass", "supersecret-123")
+        page.click("button.go")
+        page.wait_for_selector(".msg.bad")
+        self.assertIn("Неверный логин или пароль", page.inner_text(".msg.bad"))
+        self.assertEqual(posted, [{"login": "kate", "password": "supersecret-123"}])
+        self.assertEqual(page.input_value("#s-login"), "kate")          # логин не надо вводить заново
+        self.assertEqual(page.input_value("#s-pass"), "")                # пароль стёрт
+        self.assertNotIn("supersecret-123", page.content())              # и нигде в странице не остался
+        self.assertEqual(errors, [])
+
+    def test_successful_login_shows_the_diary(self):
+        from dev.sample import make_sample
+        state = {"in": False}
+
+        def setup(route):
+            state["in"] = True
+            route.fulfill(json={"ok": True, "message": "Вход выполнен. Загружаю дневник."})
+
+        def data():
+            if state["in"]:
+                d = make_sample()
+                d["status"] = {"needLogin": False, "error": None, "syncing": False}
+                d["config"], d["version"] = {}, "t"
+                return d
+            return self.first_run_data()
+
+        page, errors = self.mocked(data, setup)
+        page.wait_for_selector("#setup-form")
+        page.fill("#s-login", "kate")
+        page.fill("#s-pass", "x")
+        page.click("button.go")
+        page.wait_for_selector(".day", timeout=20000)                   # сам перешёл к дневнику
+        self.assertEqual(page.query_selector("#setup-form"), None)
+        self.assertEqual(errors, [])
+
+    def test_banner_offers_relogin_when_old_data_exists(self):
+        from dev.sample import make_sample
+        d = make_sample()
+        d["status"] = {"needLogin": True, "error": "Неверный логин или пароль. Введите логин и пароль заново.", "syncing": False}
+        d["config"], d["version"] = {}, "t"
+        page, errors = self.mocked(d)
+        page.wait_for_selector(".banner.bad button[data-setup]")
+        self.assertIn("Неверный логин или пароль", page.inner_text(".banner.bad"))
+        page.click(".banner.bad button[data-setup]")
+        page.wait_for_selector("#setup-form")
+        self.assertIsNotNone(page.query_selector(".day"))                # старые данные остаются под формой
+        self.assertEqual(errors, [])
+
+    def test_change_login_link_when_everything_works(self):
+        page, errors = self.open(375, 812)
+        page.click("button.linkbtn[data-setup]")
+        page.wait_for_selector("#setup-form")
+        self.assertEqual(page.input_value("#s-pass"), "")
+        page.click("button[data-setup]") if page.query_selector("button[data-setup]") else None
+        self.assertEqual(errors, [])
+
+    def test_offline_copy_has_no_login_form(self):
+        ctx = self.browser.new_context()
+        page = ctx.new_page()
+        from dev.sample import make_sample
+        import json as _json
+        html = (Path(__file__).resolve().parent.parent / "web" / "index.html").read_text()
+        d = make_sample()
+        d["status"] = {"needLogin": True, "error": "x", "syncing": False}
+        page.set_content(html.replace("/*INLINE_DATA*/null", _json.dumps(d).replace("</", "<\\/")))
+        page.wait_for_selector(".day")
+        self.assertIsNone(page.query_selector("#setup-form"))
+        self.assertIsNone(page.query_selector("[data-setup]"))
 
     def test_attachment_link_and_lesson_details(self):
         page, errors = self.open(375, 812)

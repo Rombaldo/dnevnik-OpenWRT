@@ -10,7 +10,8 @@ start_service() {
     mkdir -p "$WWW/cgi-bin"
     cp -f "$APP"/web/* "$WWW"/
     cp -f "$APP/router/refresh.cgi" "$WWW/cgi-bin/refresh"
-    chmod 755 "$WWW" "$WWW/cgi-bin" "$WWW/cgi-bin/refresh"
+    cp -f "$APP/router/setup.cgi" "$WWW/cgi-bin/setup"
+    chmod 755 "$WWW" "$WWW/cgi-bin" "$WWW/cgi-bin/refresh" "$WWW/cgi-bin/setup"
     chmod 644 "$WWW"/*.* 2>/dev/null   # веб-сервер не отдаёт файлы, закрытые от остальных
     # сразу показываем последние сохранённые данные, потом обновляемся с сайта
     python3 "$APP/sync.py" --rebuild --data "$APP/data" --out "$WWW/data.json" >/dev/null 2>&1

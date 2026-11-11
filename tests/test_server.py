@@ -52,6 +52,13 @@ class ServerTests(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=10) as r:
             self.assertEqual(r.status, 200)
 
+    def test_demo_login_form_never_touches_the_real_site(self):
+        req = urllib.request.Request(self.base + "/cgi-bin/setup", data=b'{"login": "a", "password": "b"}', method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = json.loads(r.read())
+        self.assertFalse(body["ok"])
+        self.assertIn("демо", body["message"].lower())
+
     def test_files_are_not_stored_or_served(self):
         for p in ["/files/1.pdf", "/data/files/1.pdf"]:
             self.assertEqual(self.get(p)[0], 404, p)
