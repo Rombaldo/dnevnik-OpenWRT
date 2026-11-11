@@ -1,0 +1,8 @@
+.venv/
+data/
+config.json
+QR-*.svg
+__pycache__/
+*.pyc
+.DS_Store
+*.log

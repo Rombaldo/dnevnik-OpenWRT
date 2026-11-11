@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#5468f0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Дневник">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.png">
+<title>Мой дневник</title>
+<style>
+  :root {
+    --bg: #f2f4ff; --card: #ffffff; --ink: #1c2236; --muted: #667089; --line: #e6e9f6;
+    --brand: #5468f0; --brand-2: #8a5cf6; --brand-soft: #e9edff; --ok: #1f9d55; --ok-soft: #e0f6e9;
+    --shadow: 0 1px 2px rgba(40,50,110,.06), 0 6px 18px rgba(40,50,110,.06);
+    --m5: #1fa55b; --m4: #6cc04a; --m3: #f2a516; --m2: #ee6a3c; --m1: #dc3b45; --mx: #8b94ab;
+    --banner-warn-bg: #fff3d6; --banner-warn-ink: #6a4700; --banner-bad-bg: #ffe3e3; --banner-bad-ink: #7d1d1d;
+    --banner-info-bg: #e4eaff; --banner-info-ink: #263b8c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10131e; --card: #1a1f31; --ink: #eef1fb; --muted: #9aa3bd; --line: #2a3048;
+      --brand: #7c8fff; --brand-2: #a583ff; --brand-soft: #232b55; --ok: #46c27a; --ok-soft: #173525;
+      --shadow: 0 1px 2px rgba(0,0,0,.3);
+      --banner-warn-bg: #3a2f12; --banner-warn-ink: #ffd9a0; --banner-bad-bg: #3b1a1a; --banner-bad-ink: #ffbcbc;
+      --banner-info-bg: #1d2850; --banner-info-ink: #c7d4ff;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 18px/1.42 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  @media (min-width: 700px) { html, body { font-size: 20px; } }
+  body { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+  button { font: inherit; color: inherit; }
+
+  /* ---- шапка ---- */
+  header { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #fff; position: relative; overflow: hidden;
+    padding: calc(16px + env(safe-area-inset-top)) 18px 22px; }
+  header::before, header::after { content: ""; position: absolute; border-radius: 50%; background: rgba(255,255,255,.12); }
+  header::before { width: 180px; height: 180px; right: -50px; top: -70px; }
+  header::after { width: 110px; height: 110px; right: 90px; bottom: -70px; }
+  .head-in { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: 12px; position: relative; z-index: 1; }
+  .head-in .grow { flex: 1; min-width: 0; }
+  .hello { font-size: 26px; font-weight: 800; letter-spacing: -.2px; margin: 0; }
+  .sub { font-size: 14px; opacity: .88; margin-top: 2px; }
+  .refresh { background: rgba(255,255,255,.22); border: 0; border-radius: 14px; min-height: 48px; min-width: 48px; padding: 0 14px; font-size: 16px; font-weight: 600; }
+  .refresh:active { background: rgba(255,255,255,.35); }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  main { max-width: 1100px; margin: -14px auto 0; padding: 0 16px; position: relative; z-index: 2; }
+  .grid { display: block; }
+  @media (min-width: 960px) { .grid.two { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 20px; align-items: start; } }
+  .aside { display: none; }
+  @media (min-width: 960px) { .aside { display: block; } }
+
+  .banner { border-radius: 16px; padding: 12px 16px; margin: 0 0 12px; font-size: 16px; box-shadow: var(--shadow); }
+  .banner.warn { background: var(--banner-warn-bg); color: var(--banner-warn-ink); }
+  .banner.bad { background: var(--banner-bad-bg); color: var(--banner-bad-ink); }
+  .banner.info { background: var(--banner-info-bg); color: var(--banner-info-ink); }
+
+  /* ---- карточка-итог ---- */
+  .hero { background: var(--card); border-radius: 22px; padding: 18px 18px 16px; margin: 0 0 8px; box-shadow: var(--shadow); }
+  .hero .big { font-size: 22px; font-weight: 800; line-height: 1.25; }
+  .hero .small { color: var(--muted); font-size: 15px; margin-top: 4px; }
+  .bar { height: 14px; background: var(--brand-soft); border-radius: 99px; margin-top: 14px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--brand), var(--brand-2)); border-radius: 99px; transition: width .35s ease; }
+  .hero.all-done .bar > i { background: linear-gradient(90deg, #35c46f, #1f9d55); }
+  .hero.all-done { background: var(--ok-soft); }
+
+  h2 { font-size: 19px; margin: 22px 4px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tag { font-size: 13px; font-weight: 700; padding: 3px 11px; border-radius: 99px; background: var(--brand); color: #fff; }
+  .tag.soft { background: var(--brand-soft); color: var(--brand); }
+
+  /* ---- карточка урока ---- */
+  .card { background: var(--card); border-radius: 20px; padding: 14px 16px; margin: 0 0 10px; box-shadow: var(--shadow); }
+  .hw { display: flex; gap: 14px; align-items: center; border-left: 6px solid var(--c, var(--brand)); transition: opacity .2s; }
+  .ic { width: 52px; height: 52px; min-width: 52px; border-radius: 16px; display: flex; align-items: center; justify-content: center;
+    font-size: 28px; background: var(--cbg, var(--brand-soft)); }
+  .hw .body { flex: 1; min-width: 0; }
+  .hw .subj { font-weight: 800; font-size: 19px; }
+  .hw .time { display: block; color: var(--muted); font-size: 14px; font-weight: 500; }
+  @media (max-width: 480px) {
+    .hw { gap: 10px; padding: 12px 12px 12px 10px; }
+    .hw .ic { width: 42px; height: 42px; min-width: 42px; font-size: 23px; border-radius: 13px; }
+    .check { width: 50px; height: 50px; min-width: 50px; border-radius: 16px; }
+    .hw .text { font-size: 18px; }
+    .hello { font-size: 23px; }
+    .refresh { padding: 0 12px; }
+  }
+  .hw .text { margin-top: 3px; font-size: 19px; overflow-wrap: anywhere; }
+  .hw .files { margin-top: 6px; color: var(--muted); font-size: 14px; }
+  .check { width: 56px; height: 56px; min-width: 56px; border-radius: 18px; border: 3px solid var(--line); background: transparent;
+    font-size: 30px; line-height: 1; color: transparent; transition: transform .1s, background .15s; }
+  .check:active { transform: scale(.92); }
+  .hw.done { opacity: .6; }
+  .hw.done .check { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .hw.done .text { text-decoration: line-through; }
+  .none { color: var(--muted); font-size: 15px; margin: 2px 4px 8px; }
+  .free { background: var(--card); border-radius: 16px; padding: 12px 16px; margin: 0 0 10px; color: var(--muted); font-size: 16px; box-shadow: var(--shadow); }
+
+  /* ---- оценки ---- */
+  .mark { display: inline-flex; align-items: center; justify-content: center; min-width: 46px; height: 46px; padding: 0 8px; border-radius: 14px;
+    font-weight: 800; font-size: 24px; color: #fff; background: var(--mx); }
+  .m5 { background: var(--m5); } .m4 { background: var(--m4); } .m3 { background: var(--m3); } .m2 { background: var(--m2); } .m1 { background: var(--m1); }
+  .mark.sm { min-width: 36px; height: 36px; font-size: 19px; border-radius: 11px; }
+  .row { display: flex; align-items: center; gap: 14px; padding: 11px 0; border-top: 1px solid var(--line); }
+  .row:first-child { border-top: 0; padding-top: 2px; }
+  .row:last-child { padding-bottom: 2px; }
+  .row .mark { width: 58px; min-width: 58px; padding: 0; }
+  .row .t { flex: 1; min-width: 0; }
+  .row .t b { display: block; font-size: 18px; }
+  .row .t span { color: var(--muted); font-size: 14px; }
+  .row .t span.new, .new { font-size: 11px; font-weight: 800; background: #ff5a7a; color: #fff; padding: 2px 8px; border-radius: 99px; margin-left: 8px; vertical-align: 2px; display: inline; }
+  .ver { text-align: center; color: var(--muted); font-size: 12px; margin: 26px 0 4px; opacity: .7; }
+  .ins-title { font-weight: 800; font-size: 17px; margin: 4px 2px 8px; }
+  .ins-title:not(:first-child) { margin-top: 16px; }
+  .ins { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 14px; background: var(--cbg, var(--brand-soft)); margin-bottom: 6px; }
+  .ins .rsi { font-size: 22px; line-height: 1; }
+  .ins b { font-size: 16px; }
+  .ins span:last-child { margin-left: auto; color: var(--muted); font-size: 14px; text-align: right; }
+  .rt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rt { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 16px; background: var(--brand-soft); }
+  .rt.t-up { background: var(--ok-soft); } .rt.t-down { background: #fff0e0; }
+  @media (prefers-color-scheme: dark) { .rt.t-down { background: #3a2a14; } }
+  .rt .ri { font-size: 30px; line-height: 1; }
+  .rt b { display: block; font-size: 17px; } .rt span:not(.ri) { color: var(--muted); font-size: 15px; }
+  .toprow { margin-top: 12px; padding: 10px 12px; border-radius: 14px; background: #fff7d6; color: #6a4f00; font-size: 16px; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .toprow { background: #3b3312; color: #ffe08a; } }
+  .rs-title { margin: 14px 2px 8px; font-weight: 700; font-size: 16px; color: var(--muted); }
+  .rs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (min-width: 700px) { .rs-grid { grid-template-columns: 1fr 1fr 1fr; } }
+  .rs { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; background: var(--cbg, var(--brand-soft)); min-width: 0; }
+  .rs .rn { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }
+  .rs .rsi, .rs .ra { font-size: 20px; line-height: 1; }
+  .rnote { margin-top: 12px; color: var(--muted); font-size: 13px; line-height: 1.35; }
+  .cards2 { display: grid; grid-template-columns: 1fr; gap: 0 14px; }
+  @media (min-width: 700px) { .cards2 { grid-template-columns: 1fr 1fr; } }
+  .lesson .t span.theme { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .summary { display: flex; gap: 12px; margin: 0 0 8px; }
+  .stat { flex: 1; background: var(--card); border-radius: 20px; padding: 14px 16px; box-shadow: var(--shadow); text-align: center; }
+  .stat b { display: block; font-size: 34px; line-height: 1.1; font-weight: 800; }
+  .stat span { color: var(--muted); font-size: 14px; }
+  .subjhead { display: flex; align-items: center; gap: 12px; }
+  .subjhead .ic { width: 44px; height: 44px; min-width: 44px; font-size: 23px; border-radius: 14px; }
+  .subjhead b { flex: 1; font-size: 19px; }
+  .avg { color: var(--muted); font-size: 15px; text-align: right; line-height: 1.2; }
+  .avg strong { display: block; color: var(--ink); font-size: 22px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+  /* ---- расписание ---- */
+  .nav { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
+  .nav button { background: var(--card); border: 0; border-radius: 16px; min-width: 60px; min-height: 56px; font-size: 26px; box-shadow: var(--shadow); }
+  .nav button:disabled { opacity: .35; }
+  .nav .ttl { flex: 1; text-align: center; font-weight: 800; font-size: 21px; line-height: 1.2; }
+  .nav .ttl small { display: block; font-weight: 500; color: var(--muted); font-size: 15px; }
+  .lesson { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .lesson:first-child { border-top: 0; padding-top: 2px; }
+  .lesson:last-child { padding-bottom: 2px; }
+  .lesson .n { width: 20px; text-align: center; color: var(--muted); font-weight: 800; }
+  .lesson .t { flex: 1; min-width: 0; }
+  .lesson .t b { font-size: 18px; }
+  .lesson .t span { display: block; color: var(--muted); font-size: 14px; }
+  .lesson.off { opacity: .5; } .lesson.off b { text-decoration: line-through; }
+  .lesson.now { background: var(--brand-soft); border-radius: 16px; padding: 10px 10px; margin: 0 -10px; border-top-color: transparent; }
+  .now-tag { font-size: 11px; font-weight: 800; background: var(--brand); color: #fff; padding: 2px 8px; border-radius: 99px; margin-left: 8px; vertical-align: 2px; }
+  .lesson .ic { width: 44px; height: 44px; min-width: 44px; font-size: 23px; border-radius: 14px; }
+
+  .empty { text-align: center; color: var(--muted); padding: 50px 10px; background: var(--card); border-radius: 22px; box-shadow: var(--shadow); }
+  .empty .em { font-size: 54px; display: block; margin-bottom: 6px; }
+
+  nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); box-shadow: 0 -4px 20px rgba(40,50,110,.1);
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); z-index: 10; display: flex; gap: 6px; justify-content: center; }
+  nav.tabs button { flex: 1; max-width: 260px; border: 0; background: transparent; color: var(--muted); border-radius: 18px;
+    padding: 8px 4px; min-height: 66px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 14px; font-weight: 600; }
+  nav.tabs button .e { font-size: 26px; line-height: 1; }
+  nav.tabs button.on { color: var(--brand); background: var(--brand-soft); }
+</style>
+</head>
+<body>
+<header>
+  <div class="head-in">
+    <div class="grow"><h1 class="hello" id="hello">Мой дневник</h1><div class="sub" id="updated"></div></div>
+    <button class="refresh" id="refresh" aria-label="Обновить"><span id="ricon">⟳</span> Обновить</button>
+  </div>
+</header>
+<main id="main"></main>
+<nav class="tabs">
+  <button data-tab="hw" class="on"><span class="e">📝</span>Домашка</button>
+  <button data-tab="marks"><span class="e">⭐</span>Оценки</button>
+  <button data-tab="plan"><span class="e">🗓</span>Расписание</button>
+</nav>
+
+<script>
+window.__DATA__ = /*INLINE_DATA*/null;   // сервер подставляет сюда данные в «offline»-копии
+
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const MONTHS = ["янв.", "фев.", "мар.", "апр.", "мая", "июн.", "июл.", "авг.", "сен.", "окт.", "нояб.", "дек."];
+const WD = { пн: "понедельник", вт: "вторник", ср: "среда", чт: "четверг", пт: "пятница", сб: "суббота", вс: "воскресенье" };
+
+// Иконка и цвет каждого предмета
+const SUBJ = [
+  [/рус/i, "📖", "#ef6c57"], [/матем|алгебр/i, "➗", "#4f6bed"], [/геометр|черч/i, "📐", "#3d7be0"],
+  [/лит|чтен/i, "📚", "#c0589b"], [/англ|язык.*англ/i, "🔤", "#17a2b8"], [/истор/i, "🏛️", "#b7791f"],
+  [/географ/i, "🌍", "#2f9e8f"], [/биолог|окр/i, "🌿", "#46a758"], [/музык/i, "🎵", "#9b5de5"],
+  [/изо|рисов/i, "🎨", "#f06292"], [/физк|спорт/i, "⚽", "#f08c00"], [/труд|технолог/i, "🛠️", "#8d6e63"],
+  [/информ/i, "💻", "#5c6bc0"], [/ров|разговор/i, "💬", "#26a69a"], [/род\.?\s*яз/i, "🗣️", "#e07a5f"], [/опд/i, "🕊️", "#7e8fb5"],
+];
+function subj(name) {
+  const s = SUBJ.find(([re]) => re.test(name || "")) || [null, "📘", "#6b7bd6"];
+  return { icon: s[1], color: s[2], style: `--c:${s[2]};--cbg:${s[2]}26` };
+}
+
+let data = null, tab = "hw", planDate = null, banner = "", config = {};
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const parse = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const todayIso = () => iso(new Date());
+const dayName = (s) => { const d = parse(s); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+function rel(s) {
+  const diff = Math.round((parse(s) - parse(todayIso())) / 864e5);
+  return diff === 0 ? "Сегодня" : diff === 1 ? "Завтра" : diff === -1 ? "Вчера" : null;
+}
+const noHw = (t) => !t || /^(без\s+(домашнего\s+)?задани[яе]\.?|нет\s+домашнего\s+задания\.?|-|—)$/i.test(t.trim());
+const hhmm = (s) => { const [h, m] = (s || "0:0").split(":").map(Number); return h * 60 + m; };
+
+async function load() {
+  if (window.__DATA__) {
+    data = window.__DATA__;
+    config = data.config || {};
+    banner = `<div class="banner info">Это сохранённая копия. Чтобы увидеть свежее, открой дневник с домашним интернетом.</div>`;
+    return render();
+  }
+  try {
+    const r = await fetch("data.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    data = await r.json();
+    store.set("cache", data);
+    banner = "";
+  } catch {
+    data = store.get("cache", null);
+    banner = data
+      ? `<div class="banner warn">Нет связи с домом. Показываю то, что было видно в прошлый раз.</div>`
+      : `<div class="banner bad">Нет связи с домашним компьютером, и сохранённых данных пока нет. Подключись к домашнему Wi-Fi.</div>`;
+  }
+  config = data?.config || {};
+  render();
+}
+
+function statusBanner() {
+  let h = banner;
+  const s = data?.status;
+  if (s?.needLogin) h += `<div class="banner bad"><b>Нужно войти в Дневник.ру заново.</b> Попроси маму или папу: на компьютере запустить «Войти.command». Пока показываю старые данные.</div>`;
+  else if (s?.error) h += `<div class="banner warn">Не получилось обновить с сайта, показываю прошлые данные.</div>`;
+  if (data?.updatedAt && !s?.needLogin && (Date.now() - new Date(data.updatedAt)) / 36e5 > 24)
+    h += `<div class="banner warn">Данные не обновлялись больше суток.</div>`;
+  return h;
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  const hi = h < 5 ? "Доброй ночи" : h < 12 ? "Доброе утро" : h < 18 ? "Добрый день" : "Добрый вечер";
+  return config.name ? `${hi}, ${config.name}!` : `${hi}!`;
+}
+
+function render() {
+  $("#hello").textContent = greeting();
+  if (data?.updatedAt) {
+    const d = new Date(data.updatedAt);
+    $("#updated").textContent = `Обновлено ${d.getDate()} ${MONTHS[d.getMonth()]} в ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  } else $("#updated").textContent = "Данных пока нет";
+  $("#refresh").style.display = window.__DATA__ ? "none" : "";
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  let body;
+  if (!data || !data.days?.length) {
+    body = `<div class="empty"><span class="em">⏳</span>Данные ещё загружаются.<br>Подожди пару минут и нажми «Обновить».</div>`;
+  } else {
+    const [main, aside] = tab === "hw" ? viewHw() : tab === "marks" ? viewMarks() : viewPlan();
+    body = `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
+  }
+  $("#main").innerHTML = statusBanner() + body + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
+}
+
+// ---------- помощники ----------
+function schoolDays() { return data.days.filter((d) => d.lessons.some((l) => !l.canceled)); }
+function focusDate() {
+  const today = todayIso(), days = schoolDays();
+  if (new Date().getHours() < 14 && days.some((d) => d.date === today)) return today;
+  return days.find((d) => d.date > today)?.date ?? null;
+}
+const cls = (v) => ({ 5: "m5", 4: "m4", 3: "m3", 2: "m2", 1: "m1" }[String(v).trim()] ?? "");
+function allMarks() {
+  const out = [];
+  for (const d of data.days) for (const l of d.lessons) for (const m of l.marks)
+    out.push({ date: d.date, subject: l.subject, value: String(m.value ?? "").trim(), work: m.work, created: m.created || d.date });
+  return out.sort((a, b) => (b.created > a.created ? 1 : -1));
+}
+function recentMarksCard(limit = 6) {
+  const marks = allMarks().slice(0, limit);
+  if (!marks.length) return "";
+  const today = parse(todayIso());
+  return `<h2>Последние оценки</h2><div class="card">${marks.map((m) => {
+    const fresh = (today - parse(m.date)) / 864e5 <= 1;
+    return `<div class="row"><span class="mark ${cls(m.value)}">${esc(m.value)}</span>
+      <div class="t"><b>${esc(m.subject)}${fresh ? '<span class="new">новая</span>' : ""}</b><span>${dayName(m.date)} · ${esc(m.work || "")}</span></div></div>`;
+  }).join("")}</div>`;
+}
+function dayScheduleCard(date, title) {
+  const day = data.days.find((d) => d.date === date);
+  if (!day) return "";
+  const now = new Date(), isToday = date === todayIso(), mins = now.getHours() * 60 + now.getMinutes();
+  return `${title ? `<h2>${title}</h2>` : ""}<div class="card">${day.lessons.map((l) => {
+    const s = subj(l.subject), on = isToday && !l.canceled && mins >= hhmm(l.start) && mins < hhmm(l.end);
+    return `<div class="lesson ${l.canceled ? "off" : ""} ${on ? "now" : ""}" style="${s.style}"><div class="n">${l.n}</div>
+      <div class="ic">${s.icon}</div>
+      <div class="t"><b>${esc(l.subject)}${on ? '<span class="now-tag">идёт сейчас</span>' : ""}</b>
+        <span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · отменён" : ""}</span>${l.theme ? `<span class="theme">${esc(l.theme)}</span>` : ""}</div>
+      ${l.marks.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}</div>`;
+  }).join("")}</div>`;
+}
+
+// ---------- Домашка ----------
+function viewHw() {
+  const focus = focusDate();
+  if (!focus) return [`<div class="empty"><span class="em">🎉</span>Ближайших уроков нет. Отдыхай!</div>`, ""];
+  const done = store.get("done", {});
+  const days = schoolDays().filter((d) => d.date >= focus).slice(0, 6);
+  const keyOf = (d, l) => `${d.date}|${l.subject}|${l.n}`;
+  const items = (d) => d.lessons.filter((l) => !noHw(l.homework) && !l.canceled);
+
+  const f = days[0], fi = items(f), fdone = fi.filter((l) => done[keyOf(f, l)]).length;
+  const r = rel(f.date) ?? WD[f.weekday];
+  const lc = r.toLowerCase();
+  let big, small = "";
+  if (!fi.length) big = `На ${lc === "сегодня" ? "сегодня" : lc === "завтра" ? "завтра" : lc} домашки нет 🎉`;
+  else if (fdone === fi.length) big = "Всё сделано! Можно отдыхать 🎉";
+  else big = `${lc === "сегодня" ? "На сегодня" : lc === "завтра" ? "На завтра" : "На " + lc}: осталось ${fi.length - fdone} из ${fi.length}`;
+  if (fi.length) small = `Сделано ${fdone} из ${fi.length}`;
+  let out = `<div class="hero ${fi.length && fdone === fi.length ? "all-done" : ""}" id="hero">
+      <div class="big">${big}</div>${small ? `<div class="small">${small}</div>` : ""}
+      ${fi.length ? `<div class="bar"><i style="width:${Math.round((fdone / fi.length) * 100)}%"></i></div>` : ""}</div>`;
+
+  days.forEach((d, i) => {
+    const withHw = items(d), without = d.lessons.filter((l) => noHw(l.homework) && !l.canceled).map((l) => l.subject);
+    const rr = rel(d.date);
+    out += `<h2>${rr ? `<span class="tag">${rr}</span>` : `<span class="tag soft">${esc(d.weekday)}</span>`}${esc(WD[d.weekday] ?? d.weekday)}, ${dayName(d.date)}</h2>`;
+    if (!withHw.length) out += `<div class="free">🎉 Домашки нет</div>`;
+    for (const l of withHw) {
+      const key = keyOf(d, l), s = subj(l.subject);
+      out += `<div class="card hw ${done[key] ? "done" : ""}" data-key="${esc(key)}" data-day="${d.date}" style="${s.style}">
+        <div class="ic">${s.icon}</div>
+        <div class="body"><div class="subj">${esc(l.subject)}</div><span class="time">урок ${l.n} · ${esc(l.start)}</span>
+        <div class="text">${esc(l.homework)}</div>
+        ${l.files.length ? `<div class="files">📎 ${l.files.map(esc).join(", ")} (файл смотри на сайте)</div>` : ""}</div>
+        <button class="check" aria-label="Сделано">✓</button></div>`;
+    }
+    if (without.length && withHw.length) out += `<div class="none">Без домашки: ${without.map(esc).join(", ")}</div>`;
+  });
+
+  const aside = dayScheduleCard(f.date, `Уроки: ${esc(r.toLowerCase())}`) + recentMarksCard(5);
+  return [out, aside];
+}
+
+// ---------- Как дела (по её собственным оценкам) ----------
+function insightsCard() {
+  const today = parse(todayIso()), fmt = (x) => x.toFixed(2).replace(".", ",");
+  const by = {};
+  for (const m of allMarks()) {
+    const n = Number(m.value);
+    if (n >= 1 && n <= 5) (by[m.subject] ??= []).push({ n, date: m.date });
+  }
+  const good = [], help = [];
+  for (const [name, list] of Object.entries(by)) {
+    if (list.length < 2) continue;
+    const avg = list.reduce((a, b) => a + b.n, 0) / list.length;
+    const recent = list.filter((x) => (today - parse(x.date)) / 864e5 <= 21);
+    const lows = recent.filter((x) => x.n <= 2);
+    const ravg = recent.length ? recent.reduce((a, b) => a + b.n, 0) / recent.length : null;
+    if (lows.length) help.push({ name, note: lows.length === 1 ? `двойка ${dayName(lows[0].date)}` : `двоек за 3 недели: ${lows.length}` });
+    else if (avg < 4.0) help.push({ name, note: `средний балл ${fmt(avg)}` });
+    else if (recent.length >= 2 && ravg <= avg - 0.7) help.push({ name, note: "последние оценки ниже обычных" });
+    else if (avg >= 4.6) good.push({ name, note: `средний балл ${fmt(avg)}` });
+  }
+  if (!good.length && !help.length) return "";
+  const list = (arr) => arr.map((x) => { const s = subj(x.name);
+    return `<div class="ins" style="${s.style}"><span class="rsi">${s.icon}</span><b>${esc(x.name)}</b><span>${esc(x.note)}</span></div>`; }).join("");
+  return `<h2>Как у тебя дела</h2><div class="card">
+    ${good.length ? `<div class="ins-title">👏 Получается отлично</div>${list(good)}` : ""}
+    ${help.length ? `<div class="ins-title">🤝 Над чем стоит поработать вместе</div>${list(help)}` : `<div class="ins-title">✨ Тревожных предметов нет</div>`}
+    <div class="rnote">Это считается по оценкам за учебный год: сильные предметы, где средний балл от 4,6, и места, где была двойка за последние 3 недели, низкий средний балл или оценки пошли вниз. С другими ребятами не сравнивается.</div></div>`;
+}
+
+// ---------- Рейтинг ----------
+const TREND = {
+  up: { icon: "📈", word: "поднялся", cls: "t-up" },
+  down: { icon: "📉", word: "немного просел", cls: "t-down" },
+  same: { icon: "➖", word: "без изменений", cls: "t-same" },
+};
+function ratingCard() {
+  const r = data.rating;
+  if (!r) return "";
+  const big = (label, k) => `<div class="rt ${TREND[k].cls}"><span class="ri">${TREND[k].icon}</span><div><b>${label}</b><span>${TREND[k].word}</span></div></div>`;
+  const subjects = (r.subjects || []).map((s) => {
+    const t = TREND[s.trend] || TREND.same, sj = subj(s.name);
+    return `<div class="rs ${t.cls}" style="${sj.style}"><span class="rsi">${sj.icon}</span><span class="rn">${esc(s.name)}</span><span class="ra">${t.icon}</span></div>`;
+  }).join("");
+  const top = r.top ? `<div class="toprow">🏆 В топе по предмету «${esc(r.top.subject)}»${r.top.change ? `: средний балл ${esc(r.top.change.replace("+", "вырос на ").replace("-", "изменился на "))}` : ""}</div>` : "";
+  return `<h2>Рейтинг</h2><div class="card">
+    <div class="rt-grid">${big("В классе", r.class)}${big("В параллели", r.parallel)}</div>
+    ${top}
+    ${subjects ? `<div class="rs-title">По предметам</div><div class="rs-grid">${subjects}</div>` : ""}
+    <div class="rnote">Точное место в рейтинге Дневник.ру показывает только за подписку, поэтому здесь видно только, куда движется рейтинг.</div></div>`;
+}
+
+// ---------- Оценки ----------
+function viewMarks() {
+  const marks = allMarks();
+  if (!marks.length) return [`<div class="empty"><span class="em">⭐</span>Оценок пока нет.</div>`, ""];
+  const nums = marks.map((m) => Number(m.value)).filter((n) => n >= 1 && n <= 5);
+  const total = nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2).replace(".", ",") : "–";
+  const fives = nums.filter((n) => n === 5).length;
+  let out = `<div class="summary"><div class="stat"><b>${total}</b><span>средний балл</span></div>
+    <div class="stat"><b>${fives}</b><span>пятёрок ⭐</span></div><div class="stat"><b>${marks.length}</b><span>всего оценок</span></div></div>`;
+  out += insightsCard();
+  out += ratingCard();
+  out += recentMarksCard(8);
+
+  const by = {};
+  for (const m of marks) (by[m.subject] ??= []).push(m);
+  out += `<h2>По предметам</h2><div class="cards2">`;
+  for (const name of Object.keys(by).sort((a, b) => a.localeCompare(b, "ru"))) {
+    const list = [...by[name]].sort((a, b) => (a.created > b.created ? 1 : -1)), s = subj(name);
+    const n = list.map((m) => Number(m.value)).filter((x) => x >= 1 && x <= 5);
+    const avg = n.length ? (n.reduce((a, b) => a + b, 0) / n.length).toFixed(2).replace(".", ",") : "";
+    out += `<div class="card" style="${s.style}"><div class="subjhead"><div class="ic">${s.icon}</div><b>${esc(name)}</b>
+      ${avg ? `<div class="avg">средний<strong>${avg}</strong></div>` : ""}</div>
+      <div class="chips">${list.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}</div></div>`;
+  }
+  out += `</div>`;
+  return [out, ""];
+}
+
+// ---------- Расписание ----------
+function viewPlan() {
+  const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
+  if (!dates.length) return [`<div class="empty"><span class="em">🗓</span>Расписания пока нет.</div>`, ""];
+  if (!planDate || !dates.includes(planDate)) planDate = dates.find((d) => d >= todayIso()) ?? dates[dates.length - 1];
+  const i = dates.indexOf(planDate), day = data.days.find((d) => d.date === planDate), r = rel(planDate);
+  const out = `<div class="nav"><button data-nav="-1" ${i === 0 ? "disabled" : ""} aria-label="Раньше">‹</button>
+    <div class="ttl">${r ? r + ", " : ""}${esc(WD[day.weekday] ?? "")}<small>${dayName(day.date)}</small></div>
+    <button data-nav="1" ${i === dates.length - 1 ? "disabled" : ""} aria-label="Позже">›</button></div>
+    ${dayScheduleCard(planDate, "")}`;
+  return [out, ""];
+}
+
+// ---------- События ----------
+document.addEventListener("click", (e) => {
+  const tabBtn = e.target.closest("nav.tabs button");
+  if (tabBtn) { tab = tabBtn.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  const check = e.target.closest(".check");
+  if (check) {
+    const card = check.closest(".hw"), done = store.get("done", {}), k = card.dataset.key;
+    done[k] ? delete done[k] : (done[k] = 1);
+    store.set("done", done);
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+    return;
+  }
+  const nav = e.target.closest("[data-nav]");
+  if (nav) {
+    const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
+    planDate = dates[Math.max(0, Math.min(dates.length - 1, dates.indexOf(planDate) + Number(nav.dataset.nav)))];
+    render();
+  }
+});
+
+$("#refresh").addEventListener("click", async () => {
+  const b = $("#refresh"); b.disabled = true; $("#ricon").className = "spin";
+  try { await fetch("api/refresh", { method: "POST" }); } catch {}
+  setTimeout(async () => { await load(); b.disabled = false; $("#ricon").className = ""; }, 15000);
+});
+
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !window.__DATA__) load(); });
+load();
+</script>
+</body>
+</html>
