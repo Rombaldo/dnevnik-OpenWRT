@@ -82,7 +82,8 @@ class SecretScannerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self.tmp.name)
         (self.repo / "scripts").mkdir()
-        shutil.copy(ROOT / "scripts" / "check-secrets.sh", self.repo / "scripts")
+        for f in ("check-secrets.sh", "check_secrets.py"):
+            shutil.copy(ROOT / "scripts" / f, self.repo / "scripts")
         self.git("init", "-q")
         self.git("config", "user.email", "t@example.invalid")
         self.git("config", "user.name", "t")
@@ -143,6 +144,19 @@ class SecretScannerTests(unittest.TestCase):
         self.git("commit", "-q", "-m", "removed")
         self.assertEqual(self.scan("tree")[0], 0)        # в текущих файлах уже нет
         self.assertEqual(self.scan("history")[0], 1)     # но в истории остался
+
+    def test_private_words_from_the_closed_list_are_caught(self):
+        (self.repo / "data").mkdir()
+        (self.repo / "data" / "private-words.txt").write_text("# комментарий\nСекретноеИмя\nШкола № 99\n")   # файл лежит в закрытой папке, в git не добавляется
+        self.add("README.md", "Привет, Школа № 7!\n")
+        self.assertEqual(self.scan()[0], 0)                       # посторонний текст не мешает
+        self.add("README.md", "Пример: секретноеимя учится в школа №99\n")
+        code, out = self.scan()
+        self.assertEqual(code, 1)
+        self.assertIn("личные слова", out)
+        self.git("commit", "-q", "-m", "x")
+        self.assertEqual(self.scan("tree")[0], 1)
+        self.assertEqual(self.scan("history")[0], 1)
 
     def test_project_itself_is_clean(self):
         for mode in ("tree", "history"):

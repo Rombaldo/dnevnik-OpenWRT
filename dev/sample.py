@@ -47,7 +47,20 @@ def make_sample(today=None, seed=7):
                 "canceled": False, "marks": marks,
             })
         days.append({"date": d.isoformat(), "weekday": ["пн", "вт", "ср", "чт", "пт"][d.weekday()], "lessons": lessons})
+    subjects = ["Англ. язык", "Математика", "Музыка", "Рус. язык"]
+    cur_terms = [{"number": 1, "name": "1 триместр",
+                  "subjects": [{"name": n, "marks": [str(rnd.choice([3, 4, 5])) for _ in range(6)], "average": "4,2"} for n in subjects]}]
+    past_terms = [{"number": k, "name": f"{k} триместр",
+                   "subjects": [{"name": n, "marks": [str(rnd.choice([3, 4, 5])) for _ in range(5)], "average": "4,1"} for n in subjects]}
+                  for k in (1, 2, 3)]
     return {
         "updatedAt": datetime.now().isoformat(timespec="seconds"),
         "days": days,
+        "student": {"name": "Аня", "school": 'МБОУ "Школа № 1"', "class": "5А"},
+        "years": [
+            {"year": 2026, "label": "2026/2027", "className": "5А", "periodLabel": "тр", "columns": 3, "current": True,
+             "terms": cur_terms, "final": [{"name": n, "periods": [None, None, None], "year": None} for n in subjects]},
+            {"year": 2025, "label": "2025/2026", "className": "4А", "periodLabel": "тр", "columns": 3, "current": False,
+             "terms": past_terms, "final": [{"name": n, "periods": ["4", "5", "3"], "year": "4"} for n in subjects]},
+        ],
     }

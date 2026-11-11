@@ -46,6 +46,7 @@
   .head-in .grow { flex: 1; min-width: 0; }
   .hello { font-size: 26px; font-weight: 800; letter-spacing: -.2px; margin: 0; }
   .sub { font-size: 14px; opacity: .88; margin-top: 2px; }
+  .who { font-size: 16px; font-weight: 700; margin-top: 3px; overflow-wrap: anywhere; }
   .refresh { background: rgba(255,255,255,.22); border: 0; border-radius: 14px; min-height: 48px; min-width: 48px; padding: 0 14px; font-size: 16px; font-weight: 600; }
   .refresh:active { background: rgba(255,255,255,.35); }
   .spin { display: inline-block; animation: spin 1s linear infinite; }
@@ -213,6 +214,25 @@
   .setup .fine { margin: 14px 0 0; font-size: 13px; }
   .banner button { margin-top: 8px; padding: 10px 16px; border: 0; border-radius: 12px; background: var(--brand); color: var(--brand-ink); font-weight: 700; font-size: 16px; }
   .linkbtn { display: block; margin: 18px auto 0; background: none; border: 0; color: var(--muted); font-size: 13px; text-decoration: underline; }
+
+  /* ---- оценки: переключатель «Сейчас / Итоги», годы, триместры ---- */
+  .seg { display: flex; gap: 6px; padding: 5px; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); margin: 0 0 12px; }
+  .seg button { flex: 1; min-height: 48px; border: 0; border-radius: 14px; background: transparent; color: var(--muted); font-size: 17px; font-weight: 700; }
+  .seg button.on { background: var(--brand); color: var(--brand-ink); }
+  .seg.small button { min-height: 44px; font-size: 16px; }
+  .yearnav .ttl small { display: block; }
+  .term-sub { margin: 0 0 8px 4px; color: var(--muted); font-size: 15px; }
+  .fin { display: grid; grid-template-columns: minmax(100px, 2fr) repeat(var(--cols), minmax(36px, 1fr)); gap: 6px 3px; align-items: center; background: var(--card);
+    border-radius: 20px; padding: 12px 12px; box-shadow: var(--shadow); }
+  .fin .h { color: var(--muted); font-size: 13px; font-weight: 700; text-align: center; padding-bottom: 4px; }
+  .fin .h:first-child { text-align: left; }
+  .fin .sn { font-weight: 700; font-size: 15px; line-height: 1.2; overflow-wrap: break-word; }
+  .fin .c { text-align: center; }
+  .fin .c .mark { min-width: 34px; height: 34px; padding: 0 4px; font-size: 18px; }
+  @media (max-width: 480px) { .who { font-size: 14px; } .fin { padding: 10px 8px; } }
+  .fin .dash { color: var(--muted); }
+  .fin .avgc { text-align: center; font-weight: 700; font-size: 15px; }
+  .rowline { grid-column: 1 / -1; height: 1px; background: var(--line); margin: 2px 0; }
   .empty { text-align: center; color: var(--muted); padding: 50px 10px; background: var(--card); border-radius: 22px; box-shadow: var(--shadow); }
   .empty .em { font-size: 54px; display: block; margin-bottom: 6px; }
 
@@ -227,7 +247,7 @@
 <body>
 <header>
   <div class="head-in">
-    <div class="grow"><h1 class="hello" id="hello">Мой дневник</h1><div class="sub" id="updated"></div></div>
+    <div class="grow"><h1 class="hello" id="hello">Мой дневник</h1><div class="who" id="who"></div><div class="sub" id="updated"></div></div>
     <button class="refresh" id="refresh" aria-label="Обновить"><span id="ricon">⟳</span> Обновить</button>
   </div>
 </header>
@@ -360,11 +380,14 @@ function statusBanner() {
 function greeting() {
   const h = new Date().getHours();
   const hi = h < 5 ? "Доброй ночи" : h < 12 ? "Доброе утро" : h < 18 ? "Добрый день" : "Добрый вечер";
-  return config.name ? `${hi}, ${config.name}!` : `${hi}!`;
+  const name = config.name || data?.student?.name;
+  return name ? `${hi}, ${name}!` : `${hi}!`;
 }
 
 function render() {
   $("#hello").textContent = greeting();
+  const st = data?.student;
+  $("#who").textContent = st?.name ? `${st.name}${st.school ? ` (${st.school})` : ""}` : "";
   if (data?.updatedAt) {
     const d = new Date(data.updatedAt);
     $("#updated").textContent = `Обновлено ${d.getDate()} ${MONTHS[d.getMonth()]} в ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -489,10 +512,60 @@ function viewHw() {
 }
 
 // ---------- Оценки ----------
+let marksView = "now", yearIdx = 0, termSel = {};
+const seg = (items, cur, attr, cls2 = "") => `<div class="seg ${cls2}">${items.map(([k, label]) => `<button class="${String(k) === String(cur) ? "on" : ""}" ${attr}="${esc(k)}">${esc(label)}</button>`).join("")}</div>`;
+
+function markChip(v, small = true) {
+  const t = String(v ?? "").trim();
+  if (!t) return `<span class="dash">–</span>`;
+  const first = t.split("/")[0];
+  return `<span class="mark ${small ? "sm" : ""} ${cls(first)}">${esc(t)}</span>`;
+}
+
+function viewYears() {
+  const years = data.years || [];
+  if (!years.length) return `<div class="empty"><span class="em">📚</span>Итоговые оценки появятся после следующего обновления.</div>`;
+  yearIdx = Math.max(0, Math.min(years.length - 1, yearIdx));
+  const y = years[yearIdx];
+  const lab = y.periodLabel === "тр" ? "тр" : "пер.";
+  const termKeys = y.terms.map((t) => String(t.number));
+  let sel = termSel[y.label];
+  if (!sel || (sel !== "final" && !termKeys.includes(sel))) sel = y.current ? (termKeys[termKeys.length - 1] || "final") : "final";
+  termSel[y.label] = sel;
+  let out = `<div class="nav yearnav"><button data-year="1" ${yearIdx >= years.length - 1 ? "disabled" : ""} aria-label="Прошлый год">‹</button>
+    <div class="ttl">${esc(y.label)} (${esc(y.className)})<small>${y.current ? "этот учебный год" : "прошлый учебный год"}</small></div>
+    <button data-year="-1" ${yearIdx <= 0 ? "disabled" : ""} aria-label="Следующий год">›</button></div>`;
+  out += seg([...y.terms.map((t) => [String(t.number), `${t.number} ${lab}`]), ["final", "Итог"]], sel, "data-term", "small");
+
+  if (sel === "final") {
+    const cols = y.columns || 3;
+    out += `<div class="fin" style="--cols:${cols + 1}"><div class="h">Предмет</div>${Array.from({ length: cols }, (_, i) => `<div class="h">${i + 1} ${lab}</div>`).join("")}<div class="h">Год</div>`;
+    for (const r of y.final) {
+      out += `<div class="rowline"></div><div class="sn">${esc(r.name)}</div>${Array.from({ length: cols }, (_, i) => `<div class="c">${markChip(r.periods[i])}</div>`).join("")}<div class="c">${markChip(r.year)}</div>`;
+    }
+    out += `</div>`;
+    if (!y.final.length) out = out.replace(/<div class="fin".*$/s, `<div class="empty">Итоговых оценок за этот год пока нет.</div>`);
+    return out + `<div class="term-sub" style="margin-top:10px">«–» — оценка за период ещё не выставлена.</div>`;
+  }
+  const t = y.terms.find((x) => String(x.number) === sel);
+  if (!t || !t.subjects.length) return out + `<div class="empty"><span class="em">🌱</span>В этом периоде оценок пока нет.</div>`;
+  out += `<div class="cards2" style="margin-top:12px">`;
+  for (const sb of t.subjects) {
+    const s = subj(sb.name);
+    out += `<div class="card" style="${s.style}"><div class="subjhead"><div class="ic">${s.icon}</div><b>${esc(sb.name)}</b>
+      ${sb.average ? `<div class="avg">средний<strong>${esc(sb.average)}</strong></div>` : ""}</div>
+      <div class="chips">${sb.marks.map((m) => markChip(m)).join("")}</div></div>`;
+  }
+  return out + `</div>`;
+}
+
 function viewMarks() {
+  const hasYears = (data.years || []).length > 0;
+  const tabs = hasYears ? seg([["now", "Сейчас"], ["years", "По годам и итоги"]], marksView, "data-mview") : "";
+  if (hasYears && marksView === "years") return [tabs + viewYears(), ""];
   const marks = allMarks();
-  if (!marks.length) return [`<div class="empty"><span class="em">⭐</span>Оценок пока нет.</div>`, ""];
-  let out = recentMarksCard(8);
+  if (!marks.length) return [tabs + `<div class="empty"><span class="em">⭐</span>Оценок пока нет.</div>`, ""];
+  let out = tabs + recentMarksCard(8);
 
   const by = {};
   for (const m of marks) (by[m.subject] ??= []).push(m);
@@ -552,6 +625,12 @@ document.addEventListener("submit", (e) => {
 
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-setup]")) { showSetup = !showSetup; setupMsg = null; render(); window.scrollTo(0, 0); return; }
+  const mv = e.target.closest("[data-mview]");
+  if (mv) { marksView = mv.dataset.mview; render(); return; }
+  const yb = e.target.closest("[data-year]");
+  if (yb) { yearIdx += Number(yb.dataset.year); render(); return; }
+  const tb = e.target.closest("[data-term]");
+  if (tb) { const y = (data.years || [])[yearIdx]; if (y) termSel[y.label] = tb.dataset.term; render(); return; }
   const tabBtn = e.target.closest("nav.tabs button");
   if (tabBtn) { tab = tabBtn.dataset.tab; render(); window.scrollTo(0, 0); return; }
   const check = e.target.closest(".check");

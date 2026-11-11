@@ -166,6 +166,21 @@ class Client:
                 raise NeedLogin("сессия истекла") from e
             raise RuntimeError(f"сайт ответил {e.code}") from e
 
+    def json(self, path):
+        req = urllib.request.Request(self.base + path, headers={"User-Agent": USER_AGENT, "Accept": "application/json",
+                                                                 "Referer": f"{self.base}/marks"})
+        try:
+            with self.opener.open(req, timeout=self.timeout) as r:
+                if "login.dnevnik.ru" in r.geturl():
+                    raise NeedLogin("сайт отправил на страницу входа")
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise NeedLogin("сессия истекла") from e
+            raise RuntimeError(f"сайт ответил {e.code}") from e
+        except ValueError as e:
+            raise RuntimeError("сайт вернул не данные") from e
+
     def diary(self, ids, start, finish):
         url = (f"{self.base}/api/v2/marks/diary?personId={ids['personId']}&schoolId={ids['schoolId']}"
                f"&startDate={ts(start)}&finishDate={ts(finish)}&timestamp={int(time.time() * 1000)}")
@@ -186,8 +201,155 @@ class Client:
             raise NeedLogin("сайт вернул не данные дневника (вход, скорее всего, истёк)") from e
 
 
+# ---------------------------------------------------------------- ученик, учебные годы, итоговые оценки
+def _json_at(html, start):
+    """Разбирает JSON-значение (массив или объект), которое начинается в html с позиции start."""
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(html)):
+        c = html[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c in "[{":
+            depth += 1
+        elif c in "]}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(html[start:i + 1])
+                except ValueError:
+                    return None
+    return None
+
+
+def extract_json(html, key):
+    """Достаёт JSON-значение по ключу из состояния, которое сайт встраивает в страницу."""
+    m = re.search(r'"%s"\s*:\s*([\[{])' % re.escape(key), html)
+    return _json_at(html, m.start(1)) if m else None
+
+
+def json_objects(html, start_re):
+    """Все JSON-объекты, которые в странице начинаются так, как описано в start_re."""
+    out = []
+    for m in re.finditer(start_re, html):
+        obj = _json_at(html, m.start())
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def clean(text):
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def parse_student(html, ids):
+    """Имя ученика (только имя), школа, список школьных классов по учебным годам. Возвращает (student, groups)."""
+    mems = [m for m in (extract_json(html, "schoolMemberships") or []) if str(m.get("personId")) == str(ids["personId"])]
+    main = next((m for m in mems if str(m.get("schoolId")) == str(ids["schoolId"])), mems[0] if mems else None)
+    groups, seen = [], set()
+    for g in json_objects(html, r'\{"id":"\d+","name":"[^"]+","studyYear":\d{4},'):
+        periods = g.get("periods") or []
+        if not periods or all("ОДО" in clean(p.get("name")) for p in periods):   # внеурочка и допобразование не нужны
+            continue
+        if g["id"] in seen:
+            continue
+        seen.add(g["id"])
+        groups.append({"year": int(g["studyYear"]), "className": clean(g.get("name")), "groupId": str(g["id"]),
+                       "trimesters": "триместр" in clean(g.get("periodTabName")).lower(),
+                       "periods": [{"id": str(p["id"]), "number": int(p.get("number") or 0), "name": clean(p.get("name")),
+                                    "default": bool(p.get("isDefault"))} for p in periods]})
+    groups.sort(key=lambda x: -x["year"])
+    if not main:
+        return None, groups
+    student = {"name": clean(main.get("firstName")), "school": clean(main.get("schoolName")),
+               "class": groups[0]["className"] if groups else ""}
+    return student, groups
+
+
+def parse_final(data, group):
+    """Итоговые оценки по предметам: за каждый триместр и за год."""
+    rows, n = [], 3 if group["trimesters"] else 0
+    for sub in data.get("subjects") or []:
+        periods, year = {}, None
+        for w in sub.get("finalWorks") or []:
+            vals = [clean(mk.get("value")) for mk in w.get("marks") or [] if clean(mk.get("value"))]
+            value = "/".join(vals) if vals else None
+            if w.get("type") == "Year":
+                year = value
+            elif w.get("type") == "Period" and isinstance(w.get("periodNumber"), int):
+                periods[w["periodNumber"]] = value
+                n = max(n, w["periodNumber"] + 1)
+        rows.append({"name": clean(sub.get("name")), "periods": periods, "year": year})
+    n = n or 3
+    for r in rows:
+        r["periods"] = [r["periods"].get(i) for i in range(n)]
+    rows.sort(key=lambda x: x["name"].lower())
+    return rows, n
+
+
+def parse_term(data, period):
+    """Оценки по предметам за один триместр: все оценки по порядку и средний балл."""
+    subs = []
+    for sub in data.get("subjects") or []:
+        marks = []
+        for w in sorted(sub.get("works") or [], key=lambda w: w.get("date") or 0):
+            marks += [clean(m.get("value")) for m in w.get("marks") or [] if clean(m.get("value"))]
+        avg = clean((sub.get("average") or {}).get("value")) or None
+        if marks or avg:
+            subs.append({"name": clean(sub.get("name")), "marks": marks, "average": avg})
+    subs.sort(key=lambda x: x["name"].lower())
+    return {"number": period["number"] + 1, "name": period["name"], "subjects": subs}
+
+
+def fetch_study_info(client, ids, old_years=None, now=None):
+    """Ученик, школа, все учебные годы: оценки по триместрам и итоговые.
+    Прошлые годы почти не меняются: их повторно запрашиваем раз в 30 дней. Если запрос не удался, остаются прежние данные."""
+    now = now or time.time()
+    html = client.page(f"/marks/school/{ids['schoolId']}/student/{ids['personId']}/period")
+    student, groups = parse_student(html, ids)
+    old = {y.get("year"): y for y in (old_years or [])}
+    years = []
+    for idx, g in enumerate(groups):
+        prev = old.get(g["year"])
+        if idx > 0 and prev and prev.get("terms") is not None and now - prev.get("fetchedAt", 0) < 30 * 86400:
+            years.append(prev)
+            continue
+        base = f"/api/v2/marks/school/{ids['schoolId']}/person/{ids['personId']}"
+        stamp = f"&timestamp={int(now * 1000)}"
+        try:
+            final_rows, n = parse_final(client.json(f"/api/v2/marks/final/school/{ids['schoolId']}/person/{ids['personId']}"
+                                                    f"?groupId={g['groupId']}{stamp}"), g)
+            terms = []
+            for per in g["periods"]:
+                try:
+                    term = parse_term(client.json(f"{base}?groupId={g['groupId']}&periodId={per['id']}{stamp}"), per)
+                except NeedLogin:
+                    raise
+                except Exception:
+                    continue
+                if term["subjects"] or per["default"]:
+                    terms.append(term)
+            years.append({"year": g["year"], "label": f"{g['year']}/{g['year'] + 1}", "className": g["className"],
+                          "periodLabel": "тр" if g["trimesters"] else "пер.", "columns": n, "current": idx == 0,
+                          "terms": terms, "final": final_rows, "fetchedAt": int(now)})
+        except NeedLogin:
+            raise
+        except Exception:
+            if prev:
+                years.append(prev)
+    return student, years
+
+
 # ---------------------------------------------------------------- вход по логину и паролю
 LOGIN_URL = "https://login.dnevnik.ru/login/"
+INFO_EVERY_HOURS = 3        # ученика и итоговые оценки обновляем не чаще раза в 3 часа
 RELOGIN_PAUSE = 6 * 3600   # после неудачного входа повторяем не раньше чем через 6 часов: чтобы не заблокировали учётную запись
 
 
@@ -303,9 +465,13 @@ def read_json(path, default):
         return default
 
 
-def public_payload(history, updated_at, status, cfg=None, version=None):
+def public_payload(history, updated_at, status, cfg=None, version=None, student=None, years=None):
     days = [history[k] for k in sorted(history)]
     out = {"updatedAt": updated_at, "days": days, "status": status, "config": cfg or {}}
+    if student:
+        out["student"] = student
+    if years:
+        out["years"] = years
     if version:
         out["version"] = version
     return out
@@ -351,9 +517,12 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
     extra = urlparse(base).hostname if base != BASE else None   # у настоящего сайта разрешён только Дневник.ру
     login_url = login_url or (LOGIN_URL if base == BASE else base + "/login/")
 
+    student_path, years_path = data_dir / "student.json", data_dir / "years.json"
+    student, years = read_json(student_path, None), read_json(years_path, None)
+
     def fail(err, kind):
         status = {"needLogin": kind == "login", "error": str(err), "syncing": False}
-        write_public(out_path, public_payload(history, updated_prev, status, cfg, version))
+        write_public(out_path, public_payload(history, updated_prev, status, cfg, version, student, years))
 
     def relogin():
         """Заходит заново по сохранённому логину и паролю."""
@@ -409,11 +578,27 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
 
     if hashlib.sha256(json.dumps(history, sort_keys=True).encode()).hexdigest() != before:
         write_private(history_path, json.dumps(history, ensure_ascii=False))     # пишем, только если что-то изменилось
+    # ученик, школа и итоговые оценки по годам: не чаще раза в 3 часа; сбой не мешает дневнику
+    info_age_h = (time.time() - years_path.stat().st_mtime) / 3600 if years_path.exists() and student else 1e9
+    if info_age_h >= INFO_EVERY_HOURS:
+        try:
+            ids = read_json(ids_path, None)
+            new_student, new_years = fetch_study_info(Client(jar, base=base), ids, years)
+            for path, new, old in ((student_path, new_student, student), (years_path, new_years, years)):
+                if new and new != old:
+                    write_private(path, json.dumps(new, ensure_ascii=False))
+                elif new:
+                    os.utime(path)       # данные те же: просто отмечаем, что проверили
+            student, years = new_student or student, new_years or years
+        except NeedLogin:
+            pass
+        except Exception:
+            pass
     age_h = (time.time() - session_path.stat().st_mtime) / 3600 if session_path.exists() else 1e9
     if relogged or age_h >= session_save_hours:
         write_private(session_path, json.dumps(jar_to_list(jar, also=extra), ensure_ascii=False))
     payload = public_payload(history, datetime.now().isoformat(timespec="seconds"),
-                             {"needLogin": False, "error": None, "syncing": False}, cfg, version)
+                             {"needLogin": False, "error": None, "syncing": False}, cfg, version, student, years)
     write_public(out_path, payload)
     return payload
 
@@ -428,4 +613,5 @@ def rebuild(data_dir, out_path, config_path=None, version_path=None):
     version = Path(version_path).read_text().strip() if version_path and Path(version_path).exists() else None
     has_login = (data_dir / "session.json").exists() or (data_dir / "credentials.json").exists()
     status = {"needLogin": not has_login, "error": None if has_login else "Введите логин и пароль от Дневник.ру.", "syncing": False}
-    write_public(out_path, public_payload(history, updated, status, cfg, version))
+    write_public(out_path, public_payload(history, updated, status, cfg, version,
+                                          read_json(data_dir / "student.json", None), read_json(data_dir / "years.json", None)))

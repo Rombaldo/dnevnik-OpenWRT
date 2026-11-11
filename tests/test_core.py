@@ -76,11 +76,41 @@ class NormDayTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- обновление с поддельным сайтом
+# Так страница Дневник.ру встраивает состояние: школьные записи, классы по годам (в т. ч. внеурочка, которая нам не нужна)
+STATE_HTML = ('<script>window.state={"context":{"role":"Student","schoolMemberships":['
+              '{"personId":"1111111111","firstName":"Аня","lastName":"Тестова","schoolId":"2222222222",'
+              '"schoolName":"МБОУ \\"Школа № 1\\"","studyYear":2026,"groups":[{"groupId":"5001","groupName":"5А"}]},'
+              '{"personId":"1111111111","firstName":"Аня","lastName":"Тестова","schoolId":"3333333333","schoolName":"Допобразование","studyYear":2025,"groups":[]}'
+              ']},"groups":[{"id":"5001","name":"5А","studyYear":2026,"isFinalPeriodTabByDefault":false,"periods":['
+              '{"id":"7001","name":"1 триместр","shortName":"тр","number":0,"isDefault":true},'
+              '{"id":"7002","name":"2 триместр","shortName":"тр","number":1,"isDefault":false},'
+              '{"id":"7003","name":"3 триместр","shortName":"тр","number":2,"isDefault":false}],"termReportPeriods":null,"periodTabName":"По триместрам"},'
+              '{"id":"4001","name":"4А","studyYear":2025,"isFinalPeriodTabByDefault":true,"periods":['
+              '{"id":"6001","name":"1 триместр","shortName":"тр","number":0,"isDefault":false},'
+              '{"id":"6002","name":"2 триместр","shortName":"тр","number":1,"isDefault":false},'
+              '{"id":"6003","name":"3 триместр","shortName":"тр","number":2,"isDefault":true}],"termReportPeriods":null,"periodTabName":"По триместрам"},'
+              '{"id":"4999","name":"4А","studyYear":2025,"isFinalPeriodTabByDefault":true,"periods":['
+              '{"id":"6999","name":"ПЕРИОД_ДЛЯ_ОДО","shortName":"п","number":0,"isDefault":true}],"termReportPeriods":null,"periodTabName":"По периодам"}'
+              ']}</script>')
+FINAL_JSON = {"subjects": [
+    {"name": "Рус.  язык", "finalWorks": [
+        {"type": "Period", "periodNumber": 0, "marks": [{"value": "4"}]}, {"type": "Period", "periodNumber": 1, "marks": [{"value": "3"}]},
+        {"type": "Period", "periodNumber": 2, "marks": []}, {"type": "Year", "periodNumber": 0, "marks": [{"value": "4"}]}]},
+    {"name": "Музыка", "finalWorks": [{"type": "Period", "periodNumber": 0, "marks": [{"value": "ЗЧ"}]},
+                                       {"type": "Year", "periodNumber": 0, "marks": [{"value": "4"}, {"value": "5"}]}]}]}
+TERM_JSON = {"subjects": [
+    {"name": "Рус. язык", "average": {"value": "3,5"}, "works": [
+        {"date": 200, "marks": [{"value": "3"}]}, {"date": 100, "marks": [{"value": "4"}, {"value": "2"}]}]},
+    {"name": "Пустой предмет", "average": None, "works": []}]}
+
+
 class FakeSite(http.server.BaseHTTPRequestHandler):
     good_token = "good"
     requests = 0
     login_posts = 0
     only_school = None          # если задано, дневник отдаёт уроки только для этой школы
+    paths = []                  # какие адреса просили
+    final_fails = False
     captcha = False             # форма входа просит капчу
     password = "secret"
 
@@ -122,6 +152,19 @@ class FakeSite(http.server.BaseHTTPRequestHandler):
         if path == "/userfeed":
             return self._send(200, "<html>лента</html>")
         authed = f"DnevnikAuth_a={FakeSite.good_token}" in (self.headers.get("Cookie") or "")
+        FakeSite.paths.append(self.path)
+        if path.startswith("/marks/school/") and path.endswith("/period"):
+            return self._send(200, STATE_HTML) if authed else self._send(401, "login")
+        if path.startswith("/api/v2/marks/final/school/"):
+            if not authed:
+                return self._send(401, "login")
+            if FakeSite.final_fails:
+                return self._send(500, "oops")
+            return self._send(200, json.dumps(FINAL_JSON), "application/json")
+        if path.startswith("/api/v2/marks/school/") and "/person/" in path:
+            if not authed:
+                return self._send(401, "login")
+            return self._send(200, json.dumps(TERM_JSON), "application/json")
         if path == "/marks":
             if not authed:
                 return self._send(401, "<html>login</html>")
@@ -399,6 +442,124 @@ class PasswordLoginTests(unittest.TestCase):
         (self.data / "session.json").unlink()
         core.rebuild(self.data, self.out)
         self.assertFalse(json.loads(self.out.read_text())["status"]["needLogin"])
+
+
+class StudyInfoTests(unittest.TestCase):
+    """Имя ученика, школа, учебные годы, оценки по триместрам и итоговые."""
+
+    IDS = {"personId": "1111111111", "schoolId": "2222222222"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeSite)
+        cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def setUp(self):
+        FakeSite.good_token, FakeSite.only_school, FakeSite.captcha, FakeSite.password, FakeSite.login_posts = "good", "2222222222", False, "secret", 0
+        FakeSite.paths, FakeSite.final_fails = [], False
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.data, self.out = self.root / "data", self.root / "www" / "data.json"
+        self.jar = core.login_with_password("kate", "secret", self.base + "/login/", self.base)
+        self.client = core.Client(self.jar, base=self.base)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_student_school_and_class_are_read_from_the_page(self):
+        student, groups = core.parse_student(STATE_HTML, self.IDS)
+        self.assertEqual(student, {"name": "Аня", "school": 'МБОУ "Школа № 1"', "class": "5А"})   # кавычки в названии школы целы
+        self.assertNotIn("Тестова", json.dumps(student, ensure_ascii=False))                        # фамилию не храним
+        self.assertEqual([(g["year"], g["className"]) for g in groups], [(2026, "5А"), (2025, "4А")])   # внеурочка не попала
+        self.assertEqual([p["number"] for p in groups[0]["periods"]], [0, 1, 2])
+
+    def test_student_of_another_person_is_ignored(self):
+        student, _ = core.parse_student(STATE_HTML, {"personId": "999", "schoolId": "2222222222"})
+        self.assertIsNone(student)
+
+    def test_final_marks_are_parsed(self):
+        rows, n = core.parse_final(FINAL_JSON, {"trimesters": True})
+        self.assertEqual(n, 3)
+        rus = next(r for r in rows if r["name"].startswith("Рус"))
+        self.assertEqual(rus["name"], "Рус. язык")                       # двойной пробел убран
+        self.assertEqual((rus["periods"], rus["year"]), (["4", "3", None], "4"))
+        music = next(r for r in rows if r["name"] == "Музыка")
+        self.assertEqual((music["periods"][0], music["year"]), ("ЗЧ", "4/5"))   # зачёт и две оценки подряд
+
+    def test_term_marks_are_in_date_order_and_empty_subjects_dropped(self):
+        term = core.parse_term(TERM_JSON, {"number": 0, "name": "1 триместр"})
+        self.assertEqual(term["number"], 1)
+        self.assertEqual([s["name"] for s in term["subjects"]], ["Рус. язык"])
+        self.assertEqual(term["subjects"][0]["marks"], ["4", "2", "3"])
+        self.assertEqual(term["subjects"][0]["average"], "3,5")
+
+    def test_all_years_are_fetched(self):
+        student, years = core.fetch_study_info(self.client, self.IDS)
+        self.assertEqual(student["class"], "5А")
+        self.assertEqual([(y["label"], y["className"], y["current"]) for y in years], [("2026/2027", "5А", True), ("2025/2026", "4А", False)])
+        self.assertEqual(len(years[1]["terms"]), 3)
+        self.assertEqual(years[1]["periodLabel"], "тр")
+        self.assertTrue(all(y["final"] for y in years))
+
+    def test_past_years_are_not_requested_again_for_30_days(self):
+        _, years = core.fetch_study_info(self.client, self.IDS, now=1_000_000)
+        FakeSite.paths = []
+        core.fetch_study_info(self.client, self.IDS, old_years=years, now=1_000_000 + 3 * 3600)
+        asked = [p for p in FakeSite.paths if "groupId=4001" in p]
+        self.assertEqual(asked, [])                                                    # прошлый год взят из сохранённого
+        self.assertTrue([p for p in FakeSite.paths if "groupId=5001" in p])            # текущий год обновился
+        FakeSite.paths = []
+        core.fetch_study_info(self.client, self.IDS, old_years=years, now=1_000_000 + 31 * 86400)
+        self.assertTrue([p for p in FakeSite.paths if "groupId=4001" in p])            # через месяц обновляем и прошлый
+
+    def test_failed_request_keeps_old_data(self):
+        _, years = core.fetch_study_info(self.client, self.IDS)
+        FakeSite.final_fails = True
+        _, again = core.fetch_study_info(self.client, self.IDS, old_years=years, now=time.time() + 40 * 86400)
+        self.assertEqual(len(again), 2)                                                # данные не пропали
+        self.assertEqual(again[1], years[1])
+
+    def sync(self):
+        return core.sync(self.data, self.out, base=self.base, today=date(2026, 11, 11))
+
+    def test_sync_stores_and_publishes_student_and_years(self):
+        self.assertTrue(core.setup_login(self.data, "kate", "secret", base=self.base)[0])
+        payload = self.sync()
+        self.assertEqual(payload["student"]["name"], "Аня")
+        self.assertEqual(len(payload["years"]), 2)
+        for f in ("student.json", "years.json"):
+            self.assertEqual(oct(os.stat(self.data / f).st_mode)[-3:], "600", f)
+        saved = json.loads(self.out.read_text())
+        self.assertEqual(saved["years"][0]["label"], "2026/2027")
+        self.assertNotIn("Тестова", self.out.read_text())
+
+    def test_sync_does_not_ask_for_study_info_too_often(self):
+        self.assertTrue(core.setup_login(self.data, "kate", "secret", base=self.base)[0])
+        self.sync()
+        FakeSite.paths = []
+        self.sync()                                                                    # сразу второй раз
+        self.assertEqual([p for p in FakeSite.paths if "/api/v2/marks/final/" in p], [])
+
+    def test_info_failure_does_not_break_the_diary(self):
+        self.assertTrue(core.setup_login(self.data, "kate", "secret", base=self.base)[0])
+        FakeSite.final_fails = True
+        payload = self.sync()
+        self.assertEqual(len(payload["days"]), 2)                                      # дневник обновился
+        self.assertFalse(payload["status"]["needLogin"])
+
+    def test_rebuild_keeps_student_and_years(self):
+        self.assertTrue(core.setup_login(self.data, "kate", "secret", base=self.base)[0])
+        self.sync()
+        self.out.unlink()
+        core.rebuild(self.data, self.out)
+        saved = json.loads(self.out.read_text())
+        self.assertEqual(saved["student"]["school"], 'МБОУ "Школа № 1"')
+        self.assertEqual(len(saved["years"]), 2)
 
 
 if __name__ == "__main__":

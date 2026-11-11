@@ -123,6 +123,12 @@ class UiSmokeTests(unittest.TestCase):
         d["status"] = {"needLogin": False, "error": None, "syncing": False}
         d["config"] = {"name": evil}
         d["version"] = evil
+        d["student"] = {"name": evil, "school": evil, "class": evil}
+        for y in d["years"]:
+            y["label"], y["className"] = evil, evil
+            for term in y["terms"]:
+                term["subjects"] = [{"name": evil, "marks": [evil], "average": evil}]
+            y["final"] = [{"name": evil, "periods": [evil, evil, evil], "year": evil}]
         ctx = self.browser.new_context(viewport={"width": 375, "height": 812})
         page = ctx.new_page()
         page.route("**/data.json", lambda route: route.fulfill(json=d))
@@ -132,6 +138,12 @@ class UiSmokeTests(unittest.TestCase):
             page.click(f'nav.tabs button[data-tab="{tab}"]')
             page.wait_for_timeout(150)
             page.hover("body")
+            if tab == "marks":
+                page.click('[data-mview="years"]')
+                for _ in range(2):
+                    page.click('[data-term="final"]')
+                    page.click('[data-year="1"]') if not page.is_disabled('[data-year="1"]') else None
+                    page.click('.seg.small button:first-child')
         self.assertIsNone(page.evaluate("window.__pwned"))
         self.assertEqual(page.eval_on_selector_all("#main img, #main script, header img, header script", "e => e.length"), 0)
         page.close()
@@ -240,6 +252,77 @@ class UiSmokeTests(unittest.TestCase):
         page.wait_for_selector(".day")
         self.assertIsNone(page.query_selector("#setup-form"))
         self.assertIsNone(page.query_selector("[data-setup]"))
+
+    # ---- ученик, школа, оценки по годам и итоговые
+    def test_student_and_school_are_in_the_header(self):
+        page, errors = self.open(375, 812)
+        self.assertEqual(page.inner_text("#who"), 'Аня (МБОУ "Школа № 1")')
+        self.assertEqual(errors, [])
+
+    def test_greeting_uses_student_name_from_the_site_unless_configured(self):
+        from dev.sample import make_sample
+        d = make_sample()
+        d["status"], d["config"], d["version"] = {"needLogin": False, "error": None, "syncing": False}, {}, "t"
+        page, _ = self.mocked(d)
+        page.wait_for_selector(".day")
+        self.assertIn("Аня", page.inner_text("#hello"))
+        d["config"] = {"name": "Котёнок"}
+        page2, _ = self.mocked(d)
+        page2.wait_for_selector(".day")
+        self.assertIn("Котёнок", page2.inner_text("#hello"))          # имя из настроек главнее
+
+    def open_years(self, width=375, height=812):
+        page, errors = self.open(width, height)
+        page.click('nav.tabs button[data-tab="marks"]')
+        page.click('[data-mview="years"]')
+        return page, errors
+
+    def test_years_view_current_year_shows_current_trimester(self):
+        page, errors = self.open_years()
+        self.assertIn("2026/2027 (5А)", page.inner_text(".yearnav .ttl"))
+        self.assertIn("1 тр", page.inner_text(".seg.small button.on"))      # открыт идущий триместр
+        self.assertIn("средний", page.inner_text("#main"))
+        self.assertEqual(errors, [])
+
+    def test_years_view_past_year_opens_final_and_has_all_columns(self):
+        page, errors = self.open_years()
+        page.click('[data-year="1"]')                                     # на прошлый год
+        self.assertIn("2025/2026 (4А)", page.inner_text(".yearnav .ttl"))
+        self.assertEqual(page.inner_text(".seg.small button.on"), "Итог")
+        head = page.inner_text(".fin")
+        for col in ("1 тр", "2 тр", "3 тр", "Год"):
+            self.assertIn(col, head)
+        self.assertGreater(page.eval_on_selector_all(".fin .mark", "e => e.length"), 4)
+        page.click('[data-term="2"]')                                      # отдельный триместр
+        self.assertIsNone(page.query_selector(".fin"))
+        self.assertTrue(page.query_selector(".cards2 .card"))
+        self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376)   # нет горизонтальной прокрутки
+        self.assertEqual(errors, [])
+
+    def test_year_arrows_stop_at_the_ends(self):
+        page, errors = self.open_years()
+        self.assertTrue(page.is_disabled('[data-year="-1"]'))              # дальше нынешнего года нет
+        page.click('[data-year="1"]')
+        self.assertTrue(page.is_disabled('[data-year="1"]'))               # раньше самого старого года нет
+        self.assertEqual(errors, [])
+
+    def test_years_view_works_on_tablet(self):
+        page, errors = self.open_years(1280, 800)
+        page.click('[data-term="final"]')
+        self.assertGreater(len(page.inner_text(".fin")), 20)
+        self.assertEqual(errors, [])
+
+    def test_marks_without_years_still_work(self):
+        from dev.sample import make_sample
+        d = make_sample()
+        d.pop("years"), d.pop("student")
+        d["status"], d["config"], d["version"] = {"needLogin": False, "error": None, "syncing": False}, {}, "t"
+        page, errors = self.mocked(d)
+        page.click('nav.tabs button[data-tab="marks"]')
+        self.assertIsNone(page.query_selector("[data-mview]"))             # без данных по годам переключателя нет
+        self.assertIn("По предметам", page.inner_text("#main"))
+        self.assertEqual(page.inner_text("#who"), "")
+        self.assertEqual(errors, [])
 
     def test_attachment_link_and_lesson_details(self):
         page, errors = self.open(375, 812)
