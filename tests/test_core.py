@@ -593,6 +593,19 @@ class StudyInfoTests(unittest.TestCase):
         self.sync()                                                                    # сразу второй раз
         self.assertEqual([p for p in FakeSite.paths if "/api/v2/marks/final/" in p], [])
 
+    def test_new_data_format_is_loaded_at_once_not_in_three_hours(self):
+        self.assertTrue(core.setup_login(self.data, "kate", "secret", base=self.base)[0])
+        self.sync()
+        saved = json.loads((self.data / "years.json").read_text())
+        for y in saved:
+            y.pop("format")                                                            # как их сохраняла прежняя версия программы
+            for term in y["terms"]:
+                term.pop("attendance", None)
+        core.write_private(self.data / "years.json", json.dumps(saved, ensure_ascii=False))   # а файл свежий: ему меньше 3 часов
+        payload = self.sync()
+        self.assertTrue(payload["years"][0]["terms"][0].get("attendance"))             # новое появилось сразу
+        self.assertEqual(payload["years"][0]["format"], core.STUDY_FORMAT)
+
     def test_info_failure_does_not_break_the_diary(self):
         self.assertTrue(core.setup_login(self.data, "kate", "secret", base=self.base)[0])
         FakeSite.final_fails = True

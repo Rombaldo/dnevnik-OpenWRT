@@ -615,7 +615,8 @@ def sync(data_dir, out_path, base=BASE, today=None, session_save_hours=0, config
         write_private(history_path, json.dumps(history, ensure_ascii=False))     # пишем, только если что-то изменилось
     # ученик, школа и итоговые оценки по годам: не чаще раза в 3 часа; сбой не мешает дневнику
     info_age_h = (time.time() - years_path.stat().st_mtime) / 3600 if years_path.exists() and student else 1e9
-    if info_age_h >= INFO_EVERY_HOURS:
+    stale_format = any(y.get("format") != STUDY_FORMAT for y in (years or []))     # данные сохранены старой версией программы
+    if info_age_h >= INFO_EVERY_HOURS or stale_format:
         try:
             ids = read_json(ids_path, None)
             new_student, new_years = fetch_study_info(Client(jar, base=base), ids, years)
