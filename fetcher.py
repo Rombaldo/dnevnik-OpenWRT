@@ -202,52 +202,6 @@ def fetch_range(page, ids, start, finish):
     return [norm_day(d) for d in res["json"]["days"]]
 
 
-TREND = {"Up": "up", "Down": "down", "Equal": "same"}
-
-
-def fetch_rating(page, ids, history):
-    """Бесплатная часть рейтинга: направление (вверх/вниз/без изменений). Места сайт отдаёт только за подписку."""
-    if not ids.get("groupId"):
-        with page.expect_request(lambda r: "/ratings/feed-widget" in r.url, timeout=30000) as req:
-            page.goto("https://dnevnik.ru/userfeed")
-        q = parse_qs(urlparse(req.value.url).query)
-        ids["groupId"] = q["groupId"][0]
-        IDS.write_text(json.dumps(ids))
-    res = page.evaluate("""async ([g, p]) => {
-        const r = await fetch(`/ratings/feed-widget?groupId=${g}&childPersonId=${p}&page=userfeed`, {credentials: 'include'});
-        if (!r.ok) return null;
-        try { return await r.json(); } catch (e) { return null; }
-    }""", [ids["groupId"], ids["personId"]])
-    if not res:
-        return None
-    names = {}
-    for d in history.values():
-        for l in d["lessons"]:
-            if l.get("subjectId"):
-                names[l["subjectId"]] = l["subject"]
-    t = lambda x: TREND.get((x or {}).get("value"), "same")
-    out = {
-        "class": t((res.get("commonGroupRatingEvent") or {}).get("trend")),
-        "parallel": t((res.get("commonParallelRatingEvent") or {}).get("trend")),
-        "subjects": [],
-        "top": None,
-    }
-    for e in res.get("personalRatingBySubjectEvents") or []:
-        n = names.get((e.get("subject") or {}).get("id"))
-        if n:
-            out["subjects"].append({"name": n, "trend": t(e.get("trend"))})
-    top = res.get("topRatingEvent")
-    if top:
-        n = names.get(top.get("subjectId"))
-        change = None
-        for v in ((top.get("topRankingDynamic") or {}).get("values") or []):
-            if v.get("isContextPerson"):
-                change = (v.get("averageMarkChange") or {}).get("value")
-        if n:
-            out["top"] = {"subject": n, "change": (change or "").replace(" ", "")}
-    return out
-
-
 def sync():
     today = date.today()
     history = json.loads(HISTORY.read_text()) if HISTORY.exists() else {}
@@ -282,11 +236,6 @@ def sync():
                     history[d["date"]] = d
                 cur += timedelta(days=7)
             try:
-                rating = fetch_rating(page, ids, history)
-            except Exception as e:  # рейтинг - приятное дополнение, его сбой не должен ронять всё остальное
-                print("рейтинг не получен:", e, flush=True)
-                rating = None
-            try:
                 download_files(ctx, history)
             except Exception as e:  # вложения не должны ронять обновление дневника
                 print("вложения не обработаны:", e, flush=True)
@@ -299,7 +248,7 @@ def sync():
     DATA.mkdir(exist_ok=True)
     HISTORY.write_text(json.dumps(history, ensure_ascii=False))
     days = public_days(history)
-    out = {"updatedAt": datetime.now().isoformat(timespec="seconds"), "days": days, "rating": rating}
+    out = {"updatedAt": datetime.now().isoformat(timespec="seconds"), "days": days}
     tmp = OUT.with_suffix(".tmp")
     tmp.write_text(json.dumps(out, ensure_ascii=False))
     tmp.replace(OUT)

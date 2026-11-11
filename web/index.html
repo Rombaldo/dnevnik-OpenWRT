@@ -116,34 +116,9 @@
   .row .t span { color: var(--muted); font-size: 14px; }
   .row .t span.new, .new { font-size: 11px; font-weight: 800; background: #ff5a7a; color: #fff; padding: 2px 8px; border-radius: 99px; margin-left: 8px; vertical-align: 2px; display: inline; }
   .ver { text-align: center; color: var(--muted); font-size: 12px; margin: 26px 0 4px; opacity: .7; }
-  .ins-title { font-weight: 800; font-size: 17px; margin: 4px 2px 8px; }
-  .ins-title:not(:first-child) { margin-top: 16px; }
-  .ins { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 14px; background: var(--cbg, var(--brand-soft)); margin-bottom: 6px; }
-  .ins .rsi { font-size: 22px; line-height: 1; }
-  .ins b { font-size: 16px; }
-  .ins span:last-child { margin-left: auto; color: var(--muted); font-size: 14px; text-align: right; }
-  .rt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .rt { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 16px; background: var(--brand-soft); }
-  .rt.t-up { background: var(--ok-soft); } .rt.t-down { background: #fff0e0; }
-  @media (prefers-color-scheme: dark) { .rt.t-down { background: #3a2a14; } }
-  .rt .ri { font-size: 30px; line-height: 1; }
-  .rt b { display: block; font-size: 17px; } .rt span:not(.ri) { color: var(--muted); font-size: 15px; }
-  .toprow { margin-top: 12px; padding: 10px 12px; border-radius: 14px; background: #fff7d6; color: #6a4f00; font-size: 16px; font-weight: 600; }
-  @media (prefers-color-scheme: dark) { .toprow { background: #3b3312; color: #ffe08a; } }
-  .rs-title { margin: 14px 2px 8px; font-weight: 700; font-size: 16px; color: var(--muted); }
-  .rs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  @media (min-width: 700px) { .rs-grid { grid-template-columns: 1fr 1fr 1fr; } }
-  .rs { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; background: var(--cbg, var(--brand-soft)); min-width: 0; }
-  .rs .rn { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }
-  .rs .rsi, .rs .ra { font-size: 20px; line-height: 1; }
-  .rnote { margin-top: 12px; color: var(--muted); font-size: 13px; line-height: 1.35; }
   .cards2 { display: grid; grid-template-columns: 1fr; gap: 0 14px; }
   @media (min-width: 700px) { .cards2 { grid-template-columns: 1fr 1fr; } }
   .lesson .t span.theme { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .summary { display: flex; gap: 12px; margin: 0 0 8px; }
-  .stat { flex: 1; background: var(--card); border-radius: 20px; padding: 14px 16px; box-shadow: var(--shadow); text-align: center; }
-  .stat b { display: block; font-size: 34px; line-height: 1.1; font-weight: 800; }
-  .stat span { color: var(--muted); font-size: 14px; }
   .subjhead { display: flex; align-items: center; gap: 12px; }
   .subjhead .ic { width: 44px; height: 44px; min-width: 44px; font-size: 23px; border-radius: 14px; }
   .subjhead b { flex: 1; font-size: 19px; }
@@ -431,69 +406,11 @@ function viewHw() {
   return [out, recentMarksCard(5)];
 }
 
-// ---------- Как дела (по её собственным оценкам) ----------
-function insightsCard() {
-  const today = parse(todayIso()), fmt = (x) => x.toFixed(2).replace(".", ",");
-  const by = {};
-  for (const m of allMarks()) {
-    const n = Number(m.value);
-    if (n >= 1 && n <= 5) (by[m.subject] ??= []).push({ n, date: m.date });
-  }
-  const good = [], help = [];
-  for (const [name, list] of Object.entries(by)) {
-    if (list.length < 2) continue;
-    const avg = list.reduce((a, b) => a + b.n, 0) / list.length;
-    const recent = list.filter((x) => (today - parse(x.date)) / 864e5 <= 21);
-    const lows = recent.filter((x) => x.n <= 2);
-    const ravg = recent.length ? recent.reduce((a, b) => a + b.n, 0) / recent.length : null;
-    if (lows.length) help.push({ name, note: lows.length === 1 ? `двойка ${dayName(lows[0].date)}` : `двоек за 3 недели: ${lows.length}` });
-    else if (avg < 4.0) help.push({ name, note: `средний балл ${fmt(avg)}` });
-    else if (recent.length >= 2 && ravg <= avg - 0.7) help.push({ name, note: "последние оценки ниже обычных" });
-    else if (avg >= 4.6) good.push({ name, note: `средний балл ${fmt(avg)}` });
-  }
-  if (!good.length && !help.length) return "";
-  const list = (arr) => arr.map((x) => { const s = subj(x.name);
-    return `<div class="ins" style="${s.style}"><span class="rsi">${s.icon}</span><b>${esc(x.name)}</b><span>${esc(x.note)}</span></div>`; }).join("");
-  return `<h2>Как у тебя дела</h2><div class="card">
-    ${good.length ? `<div class="ins-title">👏 Получается отлично</div>${list(good)}` : ""}
-    ${help.length ? `<div class="ins-title">🤝 Над чем стоит поработать вместе</div>${list(help)}` : `<div class="ins-title">✨ Тревожных предметов нет</div>`}
-    <div class="rnote">Это считается по оценкам за учебный год: сильные предметы, где средний балл от 4,6, и места, где была двойка за последние 3 недели, низкий средний балл или оценки пошли вниз. С другими ребятами не сравнивается.</div></div>`;
-}
-
-// ---------- Рейтинг ----------
-const TREND = {
-  up: { icon: "📈", word: "поднялся", cls: "t-up" },
-  down: { icon: "📉", word: "немного просел", cls: "t-down" },
-  same: { icon: "➖", word: "без изменений", cls: "t-same" },
-};
-function ratingCard() {
-  const r = data.rating;
-  if (!r) return "";
-  const big = (label, k) => `<div class="rt ${TREND[k].cls}"><span class="ri">${TREND[k].icon}</span><div><b>${label}</b><span>${TREND[k].word}</span></div></div>`;
-  const subjects = (r.subjects || []).map((s) => {
-    const t = TREND[s.trend] || TREND.same, sj = subj(s.name);
-    return `<div class="rs ${t.cls}" style="${sj.style}"><span class="rsi">${sj.icon}</span><span class="rn">${esc(s.name)}</span><span class="ra">${t.icon}</span></div>`;
-  }).join("");
-  const top = r.top ? `<div class="toprow">🏆 В топе по предмету «${esc(r.top.subject)}»${r.top.change ? `: средний балл ${esc(r.top.change.replace("+", "вырос на ").replace("-", "изменился на "))}` : ""}</div>` : "";
-  return `<h2>Рейтинг</h2><div class="card">
-    <div class="rt-grid">${big("В классе", r.class)}${big("В параллели", r.parallel)}</div>
-    ${top}
-    ${subjects ? `<div class="rs-title">По предметам</div><div class="rs-grid">${subjects}</div>` : ""}
-    <div class="rnote">Точное место в рейтинге Дневник.ру показывает только за подписку, поэтому здесь видно только, куда движется рейтинг.</div></div>`;
-}
-
 // ---------- Оценки ----------
 function viewMarks() {
   const marks = allMarks();
   if (!marks.length) return [`<div class="empty"><span class="em">⭐</span>Оценок пока нет.</div>`, ""];
-  const nums = marks.map((m) => Number(m.value)).filter((n) => n >= 1 && n <= 5);
-  const total = nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2).replace(".", ",") : "–";
-  const fives = nums.filter((n) => n === 5).length;
-  let out = `<div class="summary"><div class="stat"><b>${total}</b><span>средний балл</span></div>
-    <div class="stat"><b>${fives}</b><span>пятёрок ⭐</span></div><div class="stat"><b>${marks.length}</b><span>всего оценок</span></div></div>`;
-  out += insightsCard();
-  out += ratingCard();
-  out += recentMarksCard(8);
+  let out = recentMarksCard(8);
 
   const by = {};
   for (const m of marks) (by[m.subject] ??= []).push(m);

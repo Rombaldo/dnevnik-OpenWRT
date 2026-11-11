@@ -41,14 +41,15 @@ class UiSmokeTests(unittest.TestCase):
     def check_tabs(self, width, height):
         page, errors = self.open(width, height)
         self.assertIn("Тест", page.inner_text("#hello"))   # имя из demo-настроек
-        for tab, needle in [("hw", "Домашка"), ("marks", "Как у тебя дела"), ("plan", "урок")]:
+        for tab, needle in [("hw", "Домашка"), ("marks", "По предметам"), ("plan", "урок")]:
             page.click(f'nav.tabs button[data-tab="{tab}"]')
             page.wait_for_timeout(150)
             text = page.inner_text("#main")
             self.assertTrue(len(text) > 50, f"вкладка {tab} пустая")
             if tab == "marks":
                 self.assertIn(needle, text)
-                self.assertIn("Рейтинг", text)
+                for gone in ("Рейтинг", "Как у тебя дела", "средний балл", "пятёрок"):
+                    self.assertNotIn(gone, text)   # эти блоки убраны по просьбе
         # нет горизонтальной прокрутки
         self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), width + 1)
         page.close()

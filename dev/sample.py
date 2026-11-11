@@ -53,8 +53,4 @@ def make_sample(today=None, seed=7):
     return {
         "updatedAt": datetime.now().isoformat(timespec="seconds"),
         "days": days,
-        "rating": {"class": "same", "parallel": "up",
-                   "subjects": [{"name": "Литература", "trend": "up"}, {"name": "Рус. язык", "trend": "down"},
-                                {"name": "Музыка", "trend": "same"}],
-                   "top": {"subject": "Литература", "change": "+0,23"}},
     }
