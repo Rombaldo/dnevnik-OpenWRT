@@ -283,12 +283,17 @@ class UiSmokeTests(unittest.TestCase):
         return page, errors, calls, state
 
     def click_logout_link(self, page):
-        page.click("button.linkbtn[data-change-login]")
+        if not page.query_selector(".settings"):
+            page.click("#gear")                                                # выход лежит в «Настройках»
+        page.click("button[data-change-login]")
         page.wait_for_selector(".modal")
 
     def test_logout_needs_two_confirmations_and_the_server_gets_the_code(self):
         page, errors, calls, state = self.open_logout()
-        self.assertEqual(page.inner_text("button.linkbtn[data-change-login]"), "Выйти из аккаунта")
+        self.assertIsNone(page.query_selector("[data-change-login]"))        # на главных экранах кнопки выхода нет: чтобы не нажать случайно
+        page.click("#gear")
+        self.assertEqual(page.inner_text("button[data-change-login]"), "Выйти из аккаунта")
+        page.click("#gear")
         self.click_logout_link(page)
         self.assertIn("Выйти из аккаунта?", page.inner_text(".modal h3"))
         self.assertEqual(calls, [])                                           # одно нажатие ничего не делает
@@ -305,7 +310,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertIn("Вы вышли из аккаунта", page.inner_text(".msg.good"))
         self.assertIsNone(page.query_selector(".day"))                          # прежнего профиля на экране больше нет
-        self.assertIsNone(page.query_selector("button.linkbtn[data-change-login]"))
+        self.assertIsNone(page.query_selector("[data-change-login]"))
         self.assertEqual(errors, [])
 
     def test_after_logout_the_old_profile_does_not_come_back_by_itself(self):
@@ -366,7 +371,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIsNone(page.query_selector(".modal"))
         self.assertEqual([c["action"] for c in calls], ["begin"])               # подтверждения выхода не было
         self.assertFalse(state["out"])
-        self.assertIsNotNone(page.query_selector(".day"))
+        self.assertIsNotNone(page.query_selector(".settings"))                  # остались в настройках, ничего не изменилось
         self.assertEqual(errors, [])
 
     def test_escape_and_backdrop_cancel(self):
@@ -378,7 +383,7 @@ class UiSmokeTests(unittest.TestCase):
         page.mouse.click(5, 5)                                                   # нажатие мимо окна
         self.assertIsNone(page.query_selector(".modal"))
         self.assertEqual(calls, [])
-        self.assertIsNotNone(page.query_selector(".day"))
+        self.assertIsNotNone(page.query_selector(".settings"))                  # остались в настройках, ничего не изменилось
         self.assertEqual(errors, [])
 
     def test_safe_button_is_focused_by_default(self):
@@ -394,7 +399,7 @@ class UiSmokeTests(unittest.TestCase):
         self.assertIn("Роутер сказал: нет.", page.inner_text(".modal"))
         page.click('[data-confirm="no"]')
         self.assertIsNone(page.query_selector(".modal"))
-        self.assertIsNotNone(page.query_selector(".day"))
+        self.assertIsNotNone(page.query_selector(".settings"))                  # остались в настройках, ничего не изменилось
         self.assertFalse(state["out"])
 
     def test_too_fast_confirmation_is_refused_by_the_router_and_shown(self):
@@ -405,7 +410,7 @@ class UiSmokeTests(unittest.TestCase):
         page.click('[data-confirm="yes"]')
         page.wait_for_function("document.querySelector('.modal h3').innerText.includes('Не получилось')")
         self.assertIn("Слишком быстро", page.inner_text(".modal"))
-        self.assertIsNotNone(page.query_selector(".day"))                       # остались в аккаунте
+        self.assertIsNotNone(page.query_selector(".settings"))                  # остались в настройках, ничего не изменилось                       # остались в аккаунте
 
     def test_login_form_explains_the_gosuslugi_case(self):
         page, _ = self.mocked(self.first_run_data())
@@ -686,6 +691,260 @@ class UiSmokeTests(unittest.TestCase):
         self.assertTrue(page.query_selector(".lesson2.open"))
         page.close()
         self.assertEqual(errors, [])
+
+
+    # ---------- Настройки, единый вид, посещаемость (v0.11.0) ----------
+    def open_ctx(self, width=375, height=812, scheme="light", settings=None, touch=True):
+        ctx = self.browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme, has_touch=touch)
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        page.goto(self.url)
+        if settings is not None:
+            page.evaluate("v => localStorage.setItem('settings', v)", settings if isinstance(settings, str) else json.dumps(settings))
+            page.reload()
+        page.wait_for_selector("nav.tabs")
+        return page, errors
+
+    def setting(self, page, key, value):
+        if not page.query_selector(".settings"):
+            page.click("#gear")
+        page.click(f'[data-set="{key}"][data-val="{value}"]')
+
+    def test_gear_opens_settings_and_back_returns(self):
+        page, errors = self.open_ctx()
+        page.click("#gear")
+        self.assertIn("Настройки", page.inner_text(".settings h1"))
+        for needle in ("Тема оформления", "Размер текста", "Листать дни свайпом", "Домашка", "Расписание", "при запуске"):
+            self.assertIn(needle, page.inner_text(".settings"))
+        self.assertIsNone(page.query_selector("nav.tabs button.on"))          # ни одна вкладка не подсвечена
+        page.click("[data-settings-close]")
+        self.assertIsNone(page.query_selector(".settings"))
+        self.assertIsNotNone(page.query_selector(".day"))
+        page.click("#gear")
+        page.click('nav.tabs button[data-tab="plan"]')                         # любая вкладка тоже закрывает настройки
+        self.assertIsNone(page.query_selector(".settings"))
+        self.assertEqual(errors, [])
+
+    def test_theme_manual_overrides_the_device_and_is_remembered(self):
+        bg = lambda pg: pg.evaluate("getComputedStyle(document.body).backgroundColor")
+        page, errors = self.open_ctx(scheme="light")
+        light = bg(page)
+        self.setting(page, "theme", "dark")
+        self.assertEqual(page.evaluate("document.documentElement.dataset.theme"), "dark")
+        self.assertNotEqual(bg(page), light)
+        page.reload(); page.wait_for_selector("nav.tabs")
+        self.assertEqual(page.evaluate("document.documentElement.dataset.theme"), "dark")   # после перезагрузки осталась
+        self.assertEqual(self.open_ctx(scheme="dark")[0].evaluate("getComputedStyle(document.body).backgroundColor"), bg(page))
+        self.setting(page, "theme", "auto")
+        self.assertEqual(bg(page), light)                                                    # «Авто» при светлом устройстве = светлая
+        page.close()
+        dark_os, errors2 = self.open_ctx(scheme="dark")
+        self.assertNotEqual(bg(dark_os), light)                                              # «Авто» при тёмном устройстве = тёмная
+        self.setting(dark_os, "theme", "light")
+        self.assertEqual(bg(dark_os), light)                                                 # светлую можно выбрать и при тёмном устройстве
+        self.assertEqual(errors + errors2, [])
+
+    def test_scale_is_one_for_every_screen_and_nothing_overflows(self):
+        for scale, expect in (("0.9", 0.9), ("1.1", 1.1), ("1.2", 1.2)):
+            page, errors = self.open_ctx(settings={"scale": float(scale)})
+            self.assertAlmostEqual(float(page.evaluate("getComputedStyle(document.documentElement).zoom")), expect, places=2)
+            for tab in ("hw", "marks", "plan"):
+                page.click(f'nav.tabs button[data-tab="{tab}"]')
+                self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376, f"{tab} при {scale}")
+            page.click('nav.tabs button[data-tab="marks"]'); page.click('[data-mview="att"]')
+            self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376, f"посещаемость при {scale}")
+            page.close()
+            self.assertEqual(errors, [])
+        page, errors = self.open_ctx()
+        self.setting(page, "scale", "1.2")
+        self.assertAlmostEqual(float(page.evaluate("getComputedStyle(document.documentElement).zoom")), 1.2, places=2)
+        self.setting(page, "scale", "1")
+        self.assertAlmostEqual(float(page.evaluate("getComputedStyle(document.documentElement).zoom")), 1.0, places=2)
+        self.assertEqual(errors, [])
+
+    def test_homework_and_schedule_look_the_same(self):
+        for w, h in ((375, 812), (1280, 800)):
+            page, errors = self.open_ctx(w, h, touch=False)
+            hw = page.evaluate("""() => { const q = (s, p) => getComputedStyle(document.querySelector(s))[p];
+              return {bg: q('body', 'backgroundImage') + q('body', 'backgroundColor'), font: q('body', 'fontSize'),
+                      title: q('.lt b', 'fontSize'), sub: q('.lt span', 'fontSize'), icon: q('.lic', 'width'),
+                      radius: q('.day', 'borderTopLeftRadius'), shadow: q('.day', 'boxShadow'), header: q('header', 'backgroundImage')}; }""")
+            page.click('nav.tabs button[data-tab="plan"]')
+            plan = page.evaluate("""() => { const q = (s, p) => getComputedStyle(document.querySelector(s))[p];
+              return {bg: q('body', 'backgroundImage') + q('body', 'backgroundColor'), font: q('body', 'fontSize'),
+                      title: q('.lesson .t b', 'fontSize'), sub: q('.lesson .t span', 'fontSize'), icon: q('.lesson .ic', 'width'),
+                      radius: q('main .card', 'borderTopLeftRadius'), shadow: q('main .card', 'boxShadow'), header: q('header', 'backgroundImage')}; }""")
+            page.click('nav.tabs button[data-tab="marks"]')
+            marks_font = page.evaluate("getComputedStyle(document.body).fontSize")
+            self.assertEqual(hw, plan, f"домашка и расписание выглядят по-разному на {w}px")
+            self.assertEqual(hw["font"], "18px")                                              # на планшете шрифт не прыгает
+            self.assertEqual(marks_font, "18px")
+            self.assertIsNone(page.query_selector(".scene"))
+            page.close()
+            self.assertEqual(errors, [])
+
+    def test_swipe_in_schedule_can_be_turned_off(self):
+        page, errors = self.open_ctx()
+        page.click('nav.tabs button[data-tab="plan"]')
+        title = lambda: page.inner_text(".nav .ttl")
+        first = title()
+        self.assertIn("Листай дни", page.inner_text("#main"))
+        page.click("#gear"); page.click('[data-flip="swipe"]')
+        self.assertEqual(page.get_attribute('[data-flip="swipe"]', "aria-checked"), "false")
+        page.click("[data-settings-close]"); page.click('nav.tabs button[data-tab="plan"]')
+        self.assertNotIn("Листай дни", page.inner_text("#main"))                              # подсказки про свайп больше нет
+        self.swipe(page, -120)
+        self.assertEqual(title(), first)                                                      # свайп ничего не делает
+        page.click('.nav button[data-nav="1"]')
+        self.assertNotEqual(title(), first)                                                   # стрелки работают
+        page.reload(); page.wait_for_selector("nav.tabs")
+        page.click('nav.tabs button[data-tab="plan"]')
+        self.swipe(page, -120); self.swipe(page, -120)
+        self.assertEqual(json.loads(page.evaluate("localStorage.getItem('settings')"))["swipe"], False)   # выбор запомнен
+        page.click("#gear"); page.click('[data-flip="swipe"]'); page.click("[data-settings-close]")
+        page.click('nav.tabs button[data-tab="plan"]')
+        before = title(); self.swipe(page, -120)
+        self.assertNotEqual(title(), before)                                                  # включили обратно: свайп снова работает
+        self.assertEqual(errors, [])
+
+    def test_homework_by_days_has_arrows_and_swipe_like_the_schedule(self):
+        page, errors = self.open_ctx(settings={"hwMode": "pages"})
+        self.assertEqual(page.eval_on_selector_all(".day", "e => e.length"), 1)               # один день за раз
+        self.assertIsNotNone(page.query_selector(".nav"))
+        self.assertIsNone(page.query_selector("[data-past]"))
+        title = lambda: page.inner_text(".nav .ttl")
+        first = title()
+        self.assertIn("Листай дни", page.inner_text("#main"))
+        self.swipe(page, -120)
+        second = title()
+        self.assertNotEqual(first, second)
+        self.swipe(page, 120)
+        self.assertEqual(title(), first)
+        page.click('.nav button[data-nav="1"]'); self.assertEqual(title(), second)           # стрелки
+        page.click('.nav button[data-nav="-1"]'); self.assertEqual(title(), first)
+        page.query_selector(".strip .check").click()                                          # отметка «сделано» работает и тут
+        self.assertTrue(page.query_selector(".strip.done"))
+        page.click('nav.tabs button[data-tab="plan"]')                                        # день в расписании независим
+        plan_before = page.inner_text(".nav .ttl"); page.click('.nav button[data-nav="1"]')
+        page.click('nav.tabs button[data-tab="hw"]'); self.assertEqual(title(), first)
+        page.click("#gear"); page.click('[data-flip="swipe"]'); page.click("[data-settings-close]")
+        self.swipe(page, -120)
+        self.assertEqual(title(), first)                                                      # выключили свайпы: не листает
+        self.assertNotIn("Листай дни", page.inner_text("#main"))
+        self.assertLessEqual(page.evaluate("document.documentElement.scrollWidth"), 376)
+        self.assertEqual(errors, [])
+
+    def test_homework_feed_is_the_default_and_does_not_swipe(self):
+        page, errors = self.open_ctx()
+        self.assertGreater(page.eval_on_selector_all(".day", "e => e.length"), 1)
+        self.assertIsNone(page.query_selector(".nav"))
+        before = page.inner_text("#main")
+        self.swipe(page, -120)
+        self.assertEqual(page.inner_text("#main"), before)
+        page.click("#gear"); page.click('[data-set="hwMode"][data-val="pages"]'); page.click("[data-settings-close]")
+        self.assertEqual(page.eval_on_selector_all(".day", "e => e.length"), 1)
+        page.click("#gear"); page.click('[data-set="hwMode"][data-val="feed"]'); page.click("[data-settings-close]")
+        self.assertGreater(page.eval_on_selector_all(".day", "e => e.length"), 1)
+        self.assertEqual(errors, [])
+
+    def test_homework_past_days_setting(self):
+        page, errors = self.open_ctx()
+        self.assertIn("Показать прошлые дни", page.inner_text("[data-past]"))
+        days_before = page.eval_on_selector_all(".day", "e => e.length")
+        page.click("#gear"); page.click('[data-flip="showPast"]'); page.click("[data-settings-close]")
+        self.assertGreater(page.eval_on_selector_all(".day", "e => e.length"), days_before)   # прошлые дни показаны сразу
+        self.assertEqual(errors, [])
+
+    def test_teachers_in_schedule_can_be_hidden(self):
+        page, errors = self.open_ctx()
+        page.click('nav.tabs button[data-tab="plan"]')
+        self.assertIn("Иванова М. П.", page.inner_text("#main"))
+        page.click("#gear"); page.click('[data-flip="teachers"]'); page.click("[data-settings-close]")
+        self.assertNotIn("Иванова М. П.", page.inner_text("#main"))
+        page.click('[data-pview="teachers"]')
+        self.assertIn("Иванова Мария Петровна", page.inner_text("#main"))                     # экран «Учителя» остаётся
+        self.assertEqual(errors, [])
+
+    def test_start_tab_is_remembered(self):
+        page, errors = self.open_ctx()
+        self.setting(page, "startTab", "plan")
+        page.reload(); page.wait_for_selector("nav.tabs")
+        self.assertEqual(page.get_attribute("nav.tabs button.on", "data-tab"), "plan")
+        self.assertEqual(errors, [])
+
+    def test_clear_done_needs_two_taps_and_reset_restores_defaults(self):
+        page, errors = self.open_ctx()
+        page.query_selector(".strip .check").click()
+        self.assertTrue(page.query_selector(".strip.done"))
+        page.click("#gear")
+        page.click("[data-clear-done]")
+        self.assertIn("Нажмите ещё раз", page.inner_text("[data-clear-done]"))
+        self.assertIsNotNone(page.evaluate("localStorage.getItem('done')"))                  # после одного нажатия ничего не стёрто
+        page.click("[data-clear-done]")
+        self.assertIsNone(page.evaluate("localStorage.getItem('done')"))
+        self.setting(page, "theme", "dark"); self.setting(page, "scale", "1.2")
+        page.click("[data-reset-settings]")
+        self.assertEqual(page.evaluate("document.documentElement.dataset.theme || 'auto'"), "auto")
+        self.assertAlmostEqual(float(page.evaluate("getComputedStyle(document.documentElement).zoom")), 1.0, places=2)
+        self.assertEqual(errors, [])
+
+    def test_broken_settings_in_storage_fall_back_to_defaults(self):
+        for junk in ("не json", '{"theme": "розовая", "scale": 99, "swipe": "да", "hwMode": 5, "startTab": "x"}', "null", "[1,2]"):
+            page, errors = self.open_ctx(settings=junk)
+            self.assertIsNone(page.evaluate("document.documentElement.dataset.theme"))
+            self.assertEqual(page.eval_on_selector_all(".day", "e => e.length") > 1, True)
+            page.click("#gear")
+            self.assertEqual(page.inner_text('[data-set="theme"].on'), "Авто")
+            self.assertEqual(page.inner_text('[data-set="scale"].on'), "Обычно")
+            page.close()
+            self.assertEqual(errors, [], junk)
+
+    def test_settings_reachable_in_the_offline_copy_without_logout(self):
+        page, errors = self.open_ctx()
+        page.evaluate("window.__DATA__ = data; showSettings = true; render()")
+        self.assertIsNone(page.query_selector("[data-change-login]"))
+        self.assertEqual(errors, [])
+
+    def test_past_period_calendar_has_no_green_fill_but_this_year_keeps_it(self):
+        page, errors = self.open_attendance()
+        ok_bg = page.evaluate("getComputedStyle(document.querySelector('.cal-cell.ok')).backgroundColor")
+        self.assertNotEqual(ok_bg, "rgba(0, 0, 0, 0)")                                          # в этом году зелёная заливка
+        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.legend .l-ok')).backgroundColor"), ok_bg)
+        page.click('[data-year="1"]'); page.click('[data-aterm="1"]')
+        clear = "rgba(0, 0, 0, 0)"
+        self.assertGreater(page.eval_on_selector_all(".cal-cell.unk", "e => e.length"), 10)
+        self.assertEqual(page.eval_on_selector_all(".cal-cell.ok", "e => e.length"), 0)
+        self.assertEqual(page.evaluate("[...new Set([...document.querySelectorAll('.cal-cell.unk')].map(e => getComputedStyle(e).backgroundColor))]"), [clear])
+        self.assertEqual(page.evaluate("getComputedStyle(document.querySelector('.legend .l-unk')).backgroundColor"), clear)
+        self.assertNotEqual(page.evaluate("getComputedStyle(document.querySelector('.cal-cell.ill')).backgroundColor"), clear)   # дни с пропусками по-прежнему цветные
+        self.assertEqual(errors, [])
+
+    def test_missed_days_are_written_next_to_missed_lessons(self):
+        page, errors = self.open_years()
+        page.click('[data-year="1"]'); page.click('[data-term="1"]')
+        text = page.inner_text(".att")
+        self.assertIn("Пропущено 6 уроков (2 дня)", text)                                        # 6 и 20 октября; опоздание 21-го днём пропуска не считается
+        self.assertIn("5 уроков по болезни", text)
+        page.click('[data-term="final"]')
+        text = page.inner_text(".att")
+        self.assertIn("Посещаемость за год", text)
+        self.assertIn("пропущено 6 уроков (2 дня)", text)                                       # и в строке триместра
+        page.click('[data-mview="att"]'); page.click('[data-aterm="1"]')
+        self.assertIn("Пропущено 6 уроков (2 дня)", page.inner_text(".att"))                     # и на экране посещаемости
+        self.assertEqual(errors, [])
+
+    def test_missed_days_counting_and_plurals(self):
+        page, _ = self.open(375, 812)
+        self.assertEqual(page.evaluate("[1, 2, 5, 11, 21, 22, 25].map(daysWord)"), ["1 день", "2 дня", "5 дней", "11 дней", "21 день", "22 дня", "25 дней"])
+        self.assertEqual(page.evaluate("""[
+            missedDays([]), missedDays(undefined),
+            missedDays([{date: 'a', kind: 'ill'}, {date: 'a', kind: 'absent'}, {date: 'b', kind: 'ill'}]),
+            missedDays([{date: 'a', kind: 'late'}]),
+            missedDays([{date: 'a', kind: 'ill'}, {date: 'b', kind: 'late'}])]"""), [0, 0, 2, 0, 1])
+        self.assertEqual(page.evaluate("lessonsAndDays(8, 0)"), "8 уроков")                       # старые данные без дней: как раньше
+        self.assertIn("(3 дня)", page.evaluate("lessonsAndDays(8, 3)"))
 
 
 if __name__ == "__main__":

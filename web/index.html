@@ -11,6 +11,12 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.png">
 <title>Мой дневник</title>
+<script>
+// Тема и размер применяются до отрисовки, чтобы страница не мигала
+try { const s = JSON.parse(localStorage.getItem("settings") || "{}");
+  if (s.theme === "light" || s.theme === "dark") document.documentElement.dataset.theme = s.theme;
+  if ([0.9, 1.1, 1.2].includes(s.scale)) document.documentElement.style.zoom = s.scale; } catch (e) {}
+</script>
 <style>
   :root {
     --bg: #f2f4ff; --card: #ffffff; --ink: #1c2236; --muted: #667089; --line: #e6e9f6;
@@ -19,20 +25,40 @@
     --m5: #1fa55b; --m4: #6cc04a; --m3: #f2a516; --m2: #ee6a3c; --m1: #dc3b45; --mx: #8b94ab;
     --banner-warn-bg: #fff3d6; --banner-warn-ink: #6a4700; --banner-bad-bg: #ffe3e3; --banner-bad-ink: #7d1d1d;
     --banner-info-bg: #e4eaff; --banner-info-ink: #263b8c;
+    --soft: #f2f4ff; --strip-bg: #dbe6ff; --strip-edge: #ffffff; --strip-check: rgba(255,255,255,.6);
+    --warn-bg: #fff0e0; --warn-ink: #b45309;
+    --c-ill-bg: #fff0d6; --c-ill: #b45309; --c-abs-bg: #ffe0e0; --c-abs: #b3261e; --c-late-bg: #e7ddff; --c-late: #5a3fc0;
+    color-scheme: light;
+  }
+  /* Тёмная тема: выбрана вручную или включена на устройстве (если не выбрана светлая). Значения ниже записаны дважды. */
+  :root[data-theme="dark"] {
+    --bg: #10131e; --card: #1a1f31; --ink: #eef1fb; --muted: #9aa3bd; --line: #2a3048;
+    --brand: #7c8fff; --brand-ink: #10131e; --brand-2: #a583ff; --brand-soft: #232b55; --ok: #46c27a; --ok-soft: #173525;
+    --shadow: 0 1px 2px rgba(0,0,0,.3);
+    --banner-warn-bg: #3a2f12; --banner-warn-ink: #ffd9a0; --banner-bad-bg: #3b1a1a; --banner-bad-ink: #ffbcbc;
+    --banner-info-bg: #1d2850; --banner-info-ink: #c7d4ff;
+    --soft: #222842; --strip-bg: #2c3768; --strip-edge: #4a5690; --strip-check: transparent;
+    --warn-bg: #3a2a14; --warn-ink: #ffc277;
+    --c-ill-bg: #4a3716; --c-ill: #ffc277; --c-abs-bg: #4a1d1d; --c-abs: #ff9b95; --c-late-bg: #2f2656; --c-late: #c7b6ff;
+    color-scheme: dark;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #10131e; --card: #1a1f31; --ink: #eef1fb; --muted: #9aa3bd; --line: #2a3048;
       --brand: #7c8fff; --brand-ink: #10131e; --brand-2: #a583ff; --brand-soft: #232b55; --ok: #46c27a; --ok-soft: #173525;
       --shadow: 0 1px 2px rgba(0,0,0,.3);
       --banner-warn-bg: #3a2f12; --banner-warn-ink: #ffd9a0; --banner-bad-bg: #3b1a1a; --banner-bad-ink: #ffbcbc;
       --banner-info-bg: #1d2850; --banner-info-ink: #c7d4ff;
+      --soft: #222842; --strip-bg: #2c3768; --strip-edge: #4a5690; --strip-check: transparent;
+      --warn-bg: #3a2a14; --warn-ink: #ffc277;
+      --c-ill-bg: #4a3716; --c-ill: #ffc277; --c-abs-bg: #4a1d1d; --c-abs: #ff9b95; --c-late-bg: #2f2656; --c-late: #c7b6ff;
+      color-scheme: dark;
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Один размер текста на всех экранах; крупнее или мельче делается в «Настройках» (zoom на странице целиком) */
   html, body { margin: 0; background: var(--bg); color: var(--ink);
     font: 18px/1.42 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-  @media (min-width: 700px) { html, body { font-size: 20px; } }
   body { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
   button { font: inherit; color: inherit; }
 
@@ -48,6 +74,8 @@
   .sub { font-size: 14px; opacity: .88; margin-top: 2px; }
   .who { font-size: 16px; font-weight: 700; margin-top: 3px; overflow-wrap: anywhere; }
   .refresh { background: rgba(255,255,255,.22); border: 0; border-radius: 14px; min-height: 48px; min-width: 48px; padding: 0 14px; font-size: 16px; font-weight: 600; }
+  @media (max-width: 480px) { .refresh .rlabel { display: none; } .refresh #ricon { font-size: 24px; } }
+  .grid > div > .nav:first-child { margin-top: 22px; }
   .refresh:active { background: rgba(255,255,255,.35); }
   .spin { display: inline-block; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -151,14 +179,9 @@
   .lesson .ic { width: 44px; height: 44px; min-width: 44px; font-size: 23px; border-radius: 14px; }
 
 
-  /* ---- лента дней (вкладка «Домашка») ---- */
-  body.feed { background: linear-gradient(180deg, #5469ee 0, #7a8ff3 380px, #a9b8fa 1100px, #dde3ff 2000px) #dde3ff; }
-  @media (prefers-color-scheme: dark) { body.feed { background: linear-gradient(180deg, #2b3482 0, #1f2660 420px, #151a3e 1200px, #10131e 2200px) #10131e; } }
-  body.feed header { background: transparent; }
-  .day { position: relative; background: var(--card); border-radius: 26px; padding: 18px 16px 8px; margin: 0 0 16px; box-shadow: 0 8px 26px rgba(30,40,110,.18); overflow: hidden; scroll-margin-top: 12px; }
-  .day .scene { position: absolute; right: -26px; top: 10px; width: 140px; height: 70px; border-radius: 50% 0 0 50%; background: linear-gradient(180deg, #6bb74b, #4c9a3a); display: flex; align-items: flex-start; justify-content: center; }
-  .day .scene span { font-size: 38px; margin: -2px 16px 0 0; line-height: 1; }
-  .dtitle { font-size: 21px; font-weight: 800; padding-right: 104px; line-height: 1.25; }
+  /* ---- дни во вкладке «Домашка»: тот же фон, карточки и шрифты, что в «Расписании» ---- */
+  .day { background: var(--card); border-radius: 20px; padding: 14px 16px 8px; margin: 0 0 14px; box-shadow: var(--shadow); scroll-margin-top: 12px; }
+  .dtitle { font-size: 21px; font-weight: 800; line-height: 1.25; }
   .dtitle .rel { color: var(--brand); }
   .dprog { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 16px; }
   .dprog b { color: var(--ink); font-size: 20px; }
@@ -167,22 +190,19 @@
   .day.all-done .bar > i { background: linear-gradient(90deg, #35c46f, #1f9d55); }
   .cheer { background: var(--ok-soft); color: var(--ok); font-weight: 700; border-radius: 14px; padding: 10px 14px; margin: 0 0 12px; font-size: 16px; }
   .lessons2 { display: block; }
-  .lesson2 { background: var(--bg); border-radius: 20px; padding: 6px 10px 10px; margin: 0 0 10px; }
-  @media (prefers-color-scheme: dark) { .lesson2 { background: #222842; } }
+  .lesson2 { background: var(--soft); border-radius: 16px; padding: 6px 10px 10px; margin: 0 0 10px; }
   .lesson2.off { opacity: .55; }
-  .lhead { display: flex; align-items: center; gap: 10px; padding: 8px 2px; cursor: pointer; }
-  .lic { width: 40px; height: 40px; min-width: 40px; border-radius: 13px; background: var(--cbg, var(--brand-soft)); display: flex; align-items: center; justify-content: center; font-size: 22px; }
-  .lt { flex: 1; min-width: 0; } .lt b { display: block; font-size: 19px; line-height: 1.2; } .lt span { color: var(--muted); font-size: 14px; }
+  .lhead { display: flex; align-items: center; gap: 12px; padding: 8px 2px; cursor: pointer; }
+  .lic { width: 44px; height: 44px; min-width: 44px; border-radius: 14px; background: var(--cbg, var(--brand-soft)); display: flex; align-items: center; justify-content: center; font-size: 23px; }
+  .lt { flex: 1; min-width: 0; } .lt b { display: block; font-size: 18px; line-height: 1.25; } .lt span { color: var(--muted); font-size: 14px; }
   .chev { color: var(--brand); font-size: 28px; line-height: 1; transition: transform .15s; padding: 0 4px; }
   .lesson2.open .chev { transform: rotate(90deg); }
   .ldetails { display: none; color: var(--muted); font-size: 15px; padding: 2px 4px 8px; }
   .lesson2.open .ldetails { display: block; }
-  .strip { display: flex; align-items: center; gap: 12px; background: #dbe6ff; border-radius: 16px; padding: 10px 10px 10px 14px; }
-  @media (prefers-color-scheme: dark) { .strip { background: #2c3768; } }
+  .strip { display: flex; align-items: center; gap: 12px; background: var(--strip-bg); border-radius: 14px; padding: 10px 10px 10px 14px; }
   .strip .stext { flex: 1; min-width: 0; }
-  .strip .text { font-size: 19px; margin: 0; overflow-wrap: anywhere; line-height: 1.35; }
-  .strip .check { width: 46px; height: 46px; min-width: 46px; border-radius: 50%; border: 3px solid #fff; background: rgba(255,255,255,.6); font-size: 26px; }
-  @media (prefers-color-scheme: dark) { .strip .check { border-color: #4a5690; background: transparent; } }
+  .strip .text { font-size: 18px; margin: 0; overflow-wrap: anywhere; line-height: 1.35; }
+  .strip .check { width: 46px; height: 46px; min-width: 46px; border-radius: 50%; border: 3px solid var(--strip-edge); background: var(--strip-check); font-size: 26px; }
   .strip.done .check { background: var(--ok); border-color: var(--ok); color: #fff; }
   .strip.done .text { text-decoration: line-through; opacity: .6; }
   .file { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 14px; padding: 10px 12px; margin-top: 8px; color: var(--ink); text-decoration: none; flex-wrap: wrap; }
@@ -192,8 +212,7 @@
   .file .fs { color: var(--brand); font-size: 14px; font-weight: 600; }
   .file.off .fs { color: var(--muted); font-weight: 500; }
   a.file:active { filter: brightness(.95); }
-  .pastbtn { display: block; width: 100%; margin: 0 0 14px; padding: 14px; border: 0; border-radius: 18px; background: rgba(255,255,255,.28); color: #fff; font-weight: 700; font-size: 16px; }
-  @media (prefers-color-scheme: light) { body.feed .aside h2 { color: #fff; } }
+  .pastbtn { display: block; width: 100%; margin: 0 0 14px; padding: 14px; border: 0; border-radius: 16px; background: var(--card); color: var(--brand); font-weight: 700; font-size: 16px; box-shadow: var(--shadow); }
 
   /* ---- вход в Дневник.ру ---- */
   .setup { padding: 20px 18px; }
@@ -251,8 +270,7 @@
   .att-pct { min-width: 84px; height: 84px; border-radius: 22px; background: var(--ok-soft); color: var(--ok); display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .att-pct strong { font-size: 28px; line-height: 1; }
   .att-pct span { font-size: 11px; font-weight: 700; margin-top: 3px; }
-  .att.warn .att-pct { background: #fff0e0; color: #b45309; }
-  @media (prefers-color-scheme: dark) { .att.warn .att-pct { background: #3a2a14; color: #ffc277; } }
+  .att.warn .att-pct { background: var(--warn-bg); color: var(--warn-ink); }
   .att-text { flex: 1; min-width: 0; font-size: 16px; line-height: 1.35; }
   .att-text b { font-size: 18px; }
   .att-title { font-weight: 800; font-size: 17px; margin: 0 0 10px; }
@@ -279,18 +297,15 @@
   .cal-cell.blank { visibility: hidden; }
   .cal-cell.none { color: var(--line); font-weight: 500; }
   .cal-cell.ok { background: var(--ok-soft); color: var(--ok); }
-  .cal-cell.unk { background: var(--bg); color: var(--ink); }
-  .cal-cell.future { background: var(--bg); color: var(--muted); }
-  .cal-cell.ill { background: #fff0d6; color: #b45309; }
-  .cal-cell.absent { background: #ffe0e0; color: #b3261e; }
-  .cal-cell.late { background: #e7ddff; color: #5a3fc0; }
-  @media (prefers-color-scheme: dark) {
-    .cal-cell.ill { background: #4a3716; color: #ffc277; } .cal-cell.absent { background: #4a1d1d; color: #ff9b95; } .cal-cell.late { background: #2f2656; color: #c7b6ff; }
-  }
+  .cal-cell.unk { background: transparent; color: var(--ink); }           /* прошлые периоды: «пропусков нет» без заливки, зелёная только в этом году */
+  .cal-cell.future { background: var(--soft); color: var(--muted); }
+  .cal-cell.ill { background: var(--c-ill-bg); color: var(--c-ill); }
+  .cal-cell.absent { background: var(--c-abs-bg); color: var(--c-abs); }
+  .cal-cell.late { background: var(--c-late-bg); color: var(--c-late); }
   .cal-cell.today { border-color: var(--brand); }
   .cal-cell.sel { border-color: var(--ink); }
-  .legend .l-ok { background: var(--ok-soft); } .legend .l-unk { background: var(--bg); border: 1px solid var(--line); } .legend .l-ill { background: #fff0d6; }
-  .legend .l-absent { background: #ffe0e0; } .legend .l-late { background: #e7ddff; } .legend .l-none { background: transparent; border: 1px dashed var(--line); }
+  .legend .l-ok { background: var(--ok-soft); } .legend .l-unk { background: transparent; border: 1px solid var(--line); } .legend .l-ill { background: var(--c-ill-bg); }
+  .legend .l-absent { background: var(--c-abs-bg); } .legend .l-late { background: var(--c-late-bg); } .legend .l-none { background: transparent; border: 1px dashed var(--line); }
   .dayinfo { margin-top: 12px; }
   .dayinfo h3 { margin: 0 0 8px; font-size: 18px; }
   .dp-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; }
@@ -321,13 +336,37 @@
     padding: 8px 4px; min-height: 66px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 14px; font-weight: 600; }
   nav.tabs button .e { font-size: 26px; line-height: 1; }
   nav.tabs button.on { color: var(--brand); background: var(--brand-soft); }
+
+  /* ---- кнопка-шестерёнка и экран «Настройки» ---- */
+  .gear { background: rgba(255,255,255,.22); border: 0; border-radius: 14px; min-height: 48px; min-width: 48px; font-size: 24px; line-height: 1; padding: 0; }
+  .gear:active, .gear.on { background: rgba(255,255,255,.4); }
+  .settings { max-width: 680px; margin: 0 auto; }
+  .settings .back { display: inline-flex; align-items: center; gap: 6px; background: var(--card); border: 0; border-radius: 14px; min-height: 48px; padding: 0 16px; font-size: 17px; font-weight: 700; color: var(--brand); box-shadow: var(--shadow); }
+  .settings h1 { font-size: 24px; margin: 14px 4px 4px; }
+  .set-card { background: var(--card); border-radius: 20px; padding: 14px 16px; margin: 12px 0 0; box-shadow: var(--shadow); }
+  .set-card h2 { margin: 0 0 4px; font-size: 18px; }
+  .set-card .hint { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+  .set-card .seg { box-shadow: none; background: var(--soft); margin: 6px 0 0; }
+  .set-card .seg button { font-size: 16px; padding: 0 4px; }
+  .setrow { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .setrow:first-of-type { border-top: 0; }
+  .setrow .lbl { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; }
+  .setrow .lbl small { display: block; color: var(--muted); font-size: 14px; font-weight: 400; }
+  .sw { position: relative; width: 62px; min-width: 62px; height: 36px; border-radius: 99px; border: 0; background: var(--line); transition: background .15s; }
+  .sw::after { content: ""; position: absolute; top: 4px; left: 4px; width: 28px; height: 28px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+  .sw[aria-checked="true"] { background: var(--brand); }
+  .sw[aria-checked="true"]::after { transform: translateX(26px); }
+  .setbtn { display: block; width: 100%; min-height: 52px; margin-top: 10px; border: 2px solid var(--line); border-radius: 14px; background: transparent; font-size: 17px; font-weight: 700; color: var(--ink); }
+  .setbtn.danger { border-color: var(--banner-bad-ink); color: var(--banner-bad-ink); }
+  .setbtn.asked { background: var(--banner-bad-bg); }
 </style>
 </head>
 <body>
 <header>
   <div class="head-in">
     <div class="grow"><h1 class="hello" id="hello">Мой дневник</h1><div class="who" id="who"></div><div class="sub" id="updated"></div></div>
-    <button class="refresh" id="refresh" aria-label="Обновить"><span id="ricon">⟳</span> Обновить</button>
+    <button class="refresh" id="refresh" aria-label="Обновить"><span id="ricon">⟳</span><span class="rlabel"> Обновить</span></button>
+    <button class="gear" id="gear" aria-label="Настройки" title="Настройки">⚙</button>
   </div>
 </header>
 <main id="main"></main>
@@ -359,11 +398,41 @@ function subj(name) {
   return { icon: s[1], color: s[2], style: `--c:${s[2]};--cbg:${s[2]}26` };
 }
 
-let data = null, tab = "hw", planDate = null, banner = "", config = {};
+let data = null, tab = "hw", planDate = null, hwDate = null, banner = "", config = {};
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
+
+// ---------- Настройки (хранятся на самом устройстве, у каждого телефона свои) ----------
+const DEFAULTS = { theme: "auto", scale: 1, swipe: true, hwMode: "feed", showPast: false, teachers: true, startTab: "hw" };
+const CHOICES = {
+  theme: ["auto", "light", "dark"], scale: [0.9, 1, 1.1, 1.2], hwMode: ["feed", "pages"], startTab: ["hw", "marks", "plan"],
+};
+function loadSettings() {
+  let raw = store.get("settings", {});
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = {};
+  const s = { ...DEFAULTS };
+  for (const k of Object.keys(DEFAULTS)) {          // берём только известные и допустимые значения
+    if (!(k in raw)) continue;
+    if (CHOICES[k] ? CHOICES[k].includes(raw[k]) : typeof raw[k] === typeof DEFAULTS[k]) s[k] = raw[k];
+  }
+  return s;
+}
+let settings = loadSettings(), showSettings = false, askClearDone = false;
+function applySettings() {
+  const root = document.documentElement;
+  if (settings.theme === "auto") delete root.dataset.theme; else root.dataset.theme = settings.theme;
+  root.style.zoom = settings.scale === 1 ? "" : String(settings.scale);
+}
+function setSetting(key, value) {
+  settings[key] = value;
+  store.set("settings", settings);
+  applySettings();
+  if (key === "showPast") showPast = value;
+}
+applySettings();
+tab = settings.startTab;
 
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const parse = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
@@ -508,7 +577,7 @@ async function finishLogout() {                      // второе подтв�
   if (!r.ok) { confirmError = r.message || "Не получилось."; return render(); }
   confirmStep = 0;
   try { localStorage.removeItem("cache"); localStorage.removeItem("done"); } catch {}      // на устройстве ничего от прежнего аккаунта не остаётся
-  showSetup = false; marksView = "now"; yearIdx = 0; attDay = null; planView = "days";
+  showSetup = false; showSettings = false; marksView = "now"; yearIdx = 0; attDay = null; planView = "days";
   setupMsg = { ok: true, text: r.message || "Вы вышли из аккаунта." };
   data = null;
   await load();
@@ -542,8 +611,15 @@ function render() {
     $("#updated").textContent = `Обновлено ${d.getDate()} ${MONTHS[d.getMonth()]} в ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   } else $("#updated").textContent = "Данных пока нет";
   $("#refresh").style.display = window.__DATA__ ? "none" : "";
-  document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
-  document.body.classList.toggle("feed", tab === "hw");
+  $("#gear").classList.toggle("on", showSettings);
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", !showSettings && b.dataset.tab === tab));
+  $("#modal").innerHTML = confirmModal();
+  if (confirmStep) {
+    const safe = document.querySelector("#modal .safe");
+    if (safe && document.activeElement !== safe) safe.focus();                    // по умолчанию выбрана безопасная кнопка
+    if (confirmStep === 2 && confirmReadyAt > Date.now()) setTimeout(() => { if (confirmStep === 2) render(); }, 500);
+  }
+  if (showSettings) { $("#main").innerHTML = settingsView(); return; }
   let body;
   const needSetup = !window.__DATA__ && data?.status?.needLogin && !data.days?.length;
   if (needSetup || (showSetup && !window.__DATA__)) {
@@ -558,14 +634,34 @@ function render() {
     const [main, aside] = tab === "hw" ? viewHw() : tab === "marks" ? viewMarks() : viewPlan();
     body = `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
   }
-  const changeLogin = !window.__DATA__ && data?.status && !showSetup && !needSetup ? `<button class="linkbtn" data-change-login>Выйти из аккаунта</button>` : "";
-  $("#modal").innerHTML = confirmModal();
-  if (confirmStep) {
-    const safe = document.querySelector("#modal .safe");
-    if (safe && document.activeElement !== safe) safe.focus();                    // по умолчанию выбрана безопасная кнопка
-    if (confirmStep === 2 && confirmReadyAt > Date.now()) setTimeout(() => { if (confirmStep === 2) render(); }, 500);
-  }
-  $("#main").innerHTML = (showSetup && !setupWait ? "" : statusBanner()) + body + changeLogin + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
+  $("#main").innerHTML = (showSetup && !setupWait ? "" : statusBanner()) + body + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
+}
+
+// ---------- Экран «Настройки» ----------
+const setSeg = (key, items) => `<div class="seg">${items.map(([v, label]) =>
+  `<button class="${settings[key] === v ? "on" : ""}" data-set="${key}" data-val="${esc(v)}">${esc(label)}</button>`).join("")}</div>`;
+const setSwitch = (key, label, hint = "") => `<div class="setrow"><div class="lbl">${esc(label)}${hint ? `<small>${esc(hint)}</small>` : ""}</div>
+  <button class="sw" role="switch" aria-checked="${settings[key]}" aria-label="${esc(label)}" data-flip="${key}"></button></div>`;
+function settingsView() {
+  const canLogout = !window.__DATA__ && data?.status && !data.status.needLogin;
+  return `<div class="settings"><button class="back" data-settings-close>‹ Назад</button><h1>Настройки</h1>
+    <div class="set-card"><h2>Тема оформления</h2><p class="hint">«Авто» — как включено на самом телефоне или планшете.</p>${setSeg("theme", [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]])}</div>
+    <div class="set-card"><h2>Размер текста и кнопок</h2><p class="hint">Один размер на всех экранах: домашка, оценки и расписание.</p>
+      ${setSeg("scale", [[0.9, "Мелко"], [1, "Обычно"], [1.1, "Крупно"], [1.2, "Очень"]])}</div>
+    <div class="set-card"><h2>Листание дней</h2>
+      ${setSwitch("swipe", "Листать дни свайпом", "Палец влево и вправо. Стрелки ‹ › работают всегда.")}</div>
+    <div class="set-card"><h2>Домашка</h2><p class="hint">Как показывать задания.</p>
+      ${setSeg("hwMode", [["feed", "Лентой"], ["pages", "По одному дню"]])}
+      ${setSwitch("showPast", "Прошлые дни сразу открыты", "Только для ленты: над сегодняшним днём видны прошлые.")}</div>
+    <div class="set-card"><h2>Расписание</h2>
+      ${setSwitch("teachers", "Учителя рядом с уроками", "Фамилия и инициалы под названием урока.")}</div>
+    <div class="set-card"><h2>Что открывать при запуске</h2>${setSeg("startTab", [["hw", "Домашка"], ["marks", "Оценки"], ["plan", "Расписание"]])}</div>
+    <div class="set-card"><h2>Порядок</h2>
+      <button class="setbtn ${askClearDone ? "asked" : ""}" data-clear-done>${askClearDone ? "Точно снять все отметки? Нажмите ещё раз" : "Снять все отметки «сделано»"}</button>
+      <button class="setbtn" data-reset-settings>Сбросить настройки</button></div>
+    ${canLogout ? `<div class="set-card"><h2>Аккаунт</h2><p class="hint">Вход в Дневник.ру хранится на роутере.</p>
+      <button class="setbtn danger" data-change-login>Выйти из аккаунта</button></div>` : ""}
+    ${data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : ""}</div>`;
 }
 
 // ---------- помощники ----------
@@ -607,10 +703,9 @@ function dayScheduleCard(date, title) {
 }
 
 // ---------- Домашка: лента дней, как в приложении Дневник.ру ----------
-const SCENE = { пн: "🚲", вт: "🛴", ср: "🚲", чт: "🛴", пт: "🏃" };
 const hasHw = (l) => !l.canceled && (!noHw(l.homework) || (l.files || []).length > 0);
 const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1).replace(".", ",")} МБ` : `${Math.max(1, Math.round(b / 1024))} КБ`);
-let showPast = false;
+let showPast = settings.showPast;
 
 function fileChips(l) {
   // Файлы у нас не хранятся: открываются по ссылке прямо с сервера Дневник.ру (нужен интернет)
@@ -625,7 +720,7 @@ function fileChips(l) {
   }).join("");
 }
 
-function dayCard(d, done, focusId) {
+function dayCard(d, done, focusId, paged = false) {
   const keyOf = (l) => `${d.date}|${l.subject}|${l.n}`;
   const list = d.lessons.filter((l) => hasHw(l));
   const dn = list.filter((l) => done[keyOf(l)]).length, total = list.length, rr = rel(d.date);
@@ -644,8 +739,7 @@ function dayCard(d, done, focusId) {
       ${strip}</div>`;
   }).join("");
   return `<section class="day ${allDone ? "all-done" : ""}" ${d.date === focusId ? 'id="focus-day"' : ""}>
-    <div class="scene"><span>${SCENE[d.weekday] ?? "🚲"}</span></div>
-    <div class="dtitle">${esc(d.weekday)}, ${dayName(d.date)}${rr ? ` <span class="rel">${rr}</span>` : ""}</div>
+    ${paged ? "" : `<div class="dtitle">${esc(d.weekday)}, ${dayName(d.date)}${rr ? ` <span class="rel">${rr}</span>` : ""}</div>`}
     <div class="dprog"><span class="dpi">☑</span>${total
       ? `<b>${dn}/${total}</b> <span>${label}</span>` : `<span>Домашки нет 🎉</span>`}</div>
     ${total ? `<div class="bar"><i style="width:${Math.round((dn / total) * 100)}%"></i></div>` : ""}
@@ -653,11 +747,27 @@ function dayCard(d, done, focusId) {
     <div class="lessons2">${lessons}</div></section>`;
 }
 
+// Стрелки и заголовок дня: одинаковые в «Домашке» (по одному дню) и в «Расписании»
+function pagerHtml(dates, date) {
+  const i = dates.indexOf(date), day = data.days.find((d) => d.date === date), r = rel(date);
+  return `<div class="nav"><button data-nav="-1" ${i === 0 ? "disabled" : ""} aria-label="Раньше">‹</button>
+    <div class="ttl">${r ? r + ", " : ""}${esc(WD[day.weekday] ?? "")}<small>${dayName(day.date)}</small></div>
+    <button data-nav="1" ${i === dates.length - 1 ? "disabled" : ""} aria-label="Позже">›</button></div>`;
+}
+const swipeHint = () => (settings.swipe ? `<div class="swipehint">Листай дни пальцем влево и вправо ↔</div>` : "");
+
 function viewHw() {
   const focus = focusDate();
   const all = schoolDays();
-  if (!focus) return [`<div class="empty"><span class="em">🎉</span>Ближайших уроков нет. Отдыхай!</div>`, ""];
   const done = store.get("done", {});
+  if (settings.hwMode === "pages" && all.length) {                   // по одному дню, как в расписании
+    const dates = all.map((d) => d.date);
+    if (!hwDate || !dates.includes(hwDate)) hwDate = focus ?? dates[dates.length - 1];
+    const out = pagerHtml(dates, hwDate) + `<div class="plan-body ${pageAnim}" id="plan-body">${dayCard(all.find((d) => d.date === hwDate), done, focus, true)}</div>` + swipeHint();
+    pageAnim = "";
+    return [out, recentMarksCard(5)];
+  }
+  if (!focus) return [`<div class="empty"><span class="em">🎉</span>Ближайших уроков нет. Отдыхай!</div>`, ""];
   const past = all.filter((d) => d.date < focus).slice(-5), upcoming = all.filter((d) => d.date >= focus).slice(0, 6);
   let out = "";
   if (past.length) out += `<button class="pastbtn" data-past>${showPast ? "Скрыть прошлые дни ↓" : "↑ Показать прошлые дни"}</button>`;
@@ -680,6 +790,10 @@ function markChip(v, small = true) {
 // ---------- Посещаемость ----------
 const plural = (n, f) => { const m = Math.abs(n) % 100, d = m % 10; return m > 10 && m < 20 ? f[2] : d > 1 && d < 5 ? f[1] : d === 1 ? f[0] : f[2]; };
 const lessonsWord = (n) => `${n} ${plural(n, ["урок", "урока", "уроков"])}`;
+const daysWord = (n) => `${n} ${plural(n, ["день", "дня", "дней"])}`;
+// Сколько разных дней с пропусками (опоздания не считаем: на урок ученик всё же пришёл)
+function missedDays(days) { return new Set((days || []).filter((d) => d.kind !== "late").map((d) => d.date)).size; }
+const lessonsAndDays = (lessons, days) => (days ? `${lessonsWord(lessons)} <span style="white-space:nowrap">(${daysWord(days)})</span>` : lessonsWord(lessons));
 const WDAY = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 const ATT_ICON = { ill: "🤒", absent: "❗", late: "⏰" };
 function lessonRanges(list) {
@@ -695,7 +809,7 @@ function attendanceCard(a, title = "Посещаемость", withDays = true) 
   if (other > 0) parts.push(`${lessonsWord(other)} по другим причинам`);
   const text = !absent && !late
     ? `<b>🎉 Пропусков и опозданий нет</b><br>Всего уроков: ${Number(a.total) || 0}`
-    : `<b>Пропущено ${lessonsWord(absent)}</b>${parts.length ? `<br>${parts.join(", ")}` : ""}${late ? `<br>Опозданий: ${late}` : ""}<br>Всего уроков: ${Number(a.total) || 0}`;
+    : `<b>Пропущено ${lessonsAndDays(absent, missedDays(a.days))}</b>${parts.length ? `<br>${parts.join(", ")}` : ""}${late ? `<br>Опозданий: ${late}` : ""}<br>Всего уроков: ${Number(a.total) || 0}`;
   const days = withDays && (a.days || []).length ? `<details><summary>Показать дни (${a.days.length})</summary>${a.days.map((d) => {
     const dt = parse(d.date);
     return `<div class="att-day"><span>${ATT_ICON[d.kind] || "•"}</span><b>${dt.getDate()} ${MONTHS[dt.getMonth()]}, ${WDAY[dt.getDay()]}</b>
@@ -711,8 +825,8 @@ function attendanceYear(y) {
   const lab = y.periodLabel === "тр" ? "тр" : "пер.";
   return `<div class="card att ${absent ? "warn" : ""}" style="margin-top:12px"><div class="att-title">Посещаемость за год</div>
     <div class="att-head"><div class="att-pct"><strong>${pct}%</strong><span>на уроках</span></div>
-    <div class="att-text"><b>${absent ? `Пропущено ${lessonsWord(absent)}` : "🎉 Пропусков нет"}</b><br>Всего уроков: ${total}</div></div>
-    <div class="att-terms">${rows.map((t) => `<div><span>${esc(t.number)} ${lab}</span><span>${t.attendance.absent ? `пропущено ${lessonsWord(Number(t.attendance.absent) || 0)}` : "без пропусков"} · ${Number(t.attendance.percent) || 0}%</span></div>`).join("")}</div></div>`;
+    <div class="att-text"><b>${absent ? `Пропущено ${lessonsAndDays(absent, missedDays(rows.flatMap((t) => t.attendance.days || [])))}` : "🎉 Пропусков нет"}</b><br>Всего уроков: ${total}</div></div>
+    <div class="att-terms">${rows.map((t) => `<div><span>${esc(t.number)} ${lab}</span><span>${t.attendance.absent ? `пропущено ${lessonsAndDays(Number(t.attendance.absent) || 0, missedDays(t.attendance.days))}` : "без пропусков"} · ${Number(t.attendance.percent) || 0}%</span></div>`).join("")}</div></div>`;
 }
 function currentAttendanceCard() {
   const y = (data.years || []).find((x) => x.current);
@@ -819,7 +933,7 @@ function viewAttendance() {
   out += `<div class="legend"><span><i class="l-${y.current ? "ok" : "unk"}"></i>${y.current ? "был на уроках" : "пропусков нет"}</span><span><i class="l-ill"></i>болезнь</span>
     <span><i class="l-absent"></i>пропуск</span><span><i class="l-late"></i>опоздание</span><span><i class="l-none"></i>нет уроков</span></div>`;
   out += calendarHtml(t, y) + dayInfoHtml(t, y) + attDaysList(t);
-  if (!y.current) out += `<div class="term-sub" style="margin-top:12px">За прошлые годы сайт не сообщает, какие дни были учебными, поэтому будни без пропусков показаны светлыми, а выходные без цвета.</div>`;
+  if (!y.current) out += `<div class="term-sub" style="margin-top:12px">За прошлые годы сайт не сообщает, какие дни были учебными, поэтому будни без пропусков показаны без заливки, а выходные бледными цифрами.</div>`;
   return out;
 }
 
@@ -887,7 +1001,7 @@ function viewMarks() {
 // ---------- Учителя ----------
 let planView = "days";
 const teachersOf = (subject) => data?.teachers?.[subject] || [];
-const teacherShort = (subject) => teachersOf(subject).map((t) => t.short || t.name).join(", ");
+const teacherShort = (subject) => (settings.teachers ? teachersOf(subject).map((t) => t.short || t.name).join(", ") : "");
 function viewTeachers() {
   const names = Object.keys(data.teachers || {}).filter((n) => (data.teachers[n] || []).length).sort((a, b) => a.localeCompare(b, "ru"));
   if (!names.length) return `<div class="empty"><span class="em">👩‍🏫</span>Учителя появятся после следующего обновления.</div>`;
@@ -905,24 +1019,23 @@ function viewPlan() {
   const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
   if (!dates.length) return [ptabs + `<div class="empty"><span class="em">🗓</span>Расписания пока нет.</div>`, ""];
   if (!planDate || !dates.includes(planDate)) planDate = dates.find((d) => d >= todayIso()) ?? dates[dates.length - 1];
-  const i = dates.indexOf(planDate), day = data.days.find((d) => d.date === planDate), r = rel(planDate);
-  const out = ptabs + `<div class="nav"><button data-nav="-1" ${i === 0 ? "disabled" : ""} aria-label="Раньше">‹</button>
-    <div class="ttl">${r ? r + ", " : ""}${esc(WD[day.weekday] ?? "")}<small>${dayName(day.date)}</small></div>
-    <button data-nav="1" ${i === dates.length - 1 ? "disabled" : ""} aria-label="Позже">›</button></div>
-    <div class="plan-body ${planAnim}" id="plan-body">${dayScheduleCard(planDate, "")}</div>
-    <div class="swipehint">Листай дни пальцем влево и вправо ↔</div>`;
-  planAnim = "";
+  const out = ptabs + pagerHtml(dates, planDate) + `<div class="plan-body ${pageAnim}" id="plan-body">${dayScheduleCard(planDate, "")}</div>` + swipeHint();
+  pageAnim = "";
   return [out, ""];
 }
 
-// Переключение дня в расписании: стрелками или свайпом
-let planAnim = "";
-function shiftPlan(delta) {
-  const dates = data.days.filter((d) => d.lessons.length).map((d) => d.date);
-  const next = Math.max(0, Math.min(dates.length - 1, dates.indexOf(planDate) + delta));
-  if (dates[next] === planDate) return;
-  planDate = dates[next];
-  planAnim = delta > 0 ? "from-right" : "from-left";
+// Переключение дня (в «Расписании» и в «Домашке» по одному дню): стрелками или свайпом
+let pageAnim = "";
+const pagedNow = () => !showSettings && !showSetup && !confirmStep && !!data?.days?.length &&
+  ((tab === "plan" && planView === "days") || (tab === "hw" && settings.hwMode === "pages"));
+function shiftPage(delta) {
+  const plan = tab === "plan";
+  const dates = plan ? data.days.filter((d) => d.lessons.length).map((d) => d.date) : schoolDays().map((d) => d.date);
+  const cur = plan ? planDate : hwDate;
+  const next = Math.max(0, Math.min(dates.length - 1, dates.indexOf(cur) + delta));
+  if (dates[next] === cur) return;
+  if (plan) planDate = dates[next]; else hwDate = dates[next];
+  pageAnim = delta > 0 ? "from-right" : "from-left";
   render();
 }
 let touch = null;
@@ -930,10 +1043,10 @@ document.addEventListener("touchstart", (e) => {
   touch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null;
 }, { passive: true });
 document.addEventListener("touchend", (e) => {
-  if (!touch || tab !== "plan" || planView !== "days" || !data?.days?.length) return;
+  if (!touch || !settings.swipe || !pagedNow()) return;
   const t = e.changedTouches[0], dx = t.clientX - touch.x, dy = t.clientY - touch.y, fast = Date.now() - touch.t < 900;
   touch = null;
-  if (fast && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) shiftPlan(dx < 0 ? 1 : -1);
+  if (fast && Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) shiftPage(dx < 0 ? 1 : -1);
 }, { passive: true });
 
 // ---------- События ----------
@@ -942,6 +1055,23 @@ document.addEventListener("submit", (e) => {
 });
 
 document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-settings-close]")) { showSettings = false; render(); window.scrollTo(0, 0); return; }
+  const st = e.target.closest("[data-set]");
+  if (st) {
+    const key = st.dataset.set, raw = st.dataset.val, val = key === "scale" ? Number(raw) : raw;
+    if (CHOICES[key]?.includes(val)) { setSetting(key, val); const y = window.scrollY; render(); window.scrollTo(0, y); }
+    return;
+  }
+  const fl = e.target.closest("[data-flip]");
+  if (fl) { setSetting(fl.dataset.flip, !settings[fl.dataset.flip]); const y = window.scrollY; render(); window.scrollTo(0, y); return; }
+  if (e.target.closest("[data-clear-done]")) {
+    if (!askClearDone) askClearDone = true; else { try { localStorage.removeItem("done"); } catch {} askClearDone = false; }
+    const y = window.scrollY; render(); window.scrollTo(0, y); return;
+  }
+  if (e.target.closest("[data-reset-settings]")) {
+    settings = { ...DEFAULTS }; store.set("settings", settings); applySettings(); showPast = settings.showPast; askClearDone = false;
+    const y = window.scrollY; render(); window.scrollTo(0, y); return;
+  }
   if (e.target.closest("[data-change-login]")) { confirmStep = 1; confirmError = ""; render(); return; }
   const cf = e.target.closest("[data-confirm]");
   if (cf) {
@@ -967,7 +1097,7 @@ document.addEventListener("click", (e) => {
   const tb = e.target.closest("[data-term]");
   if (tb) { const y = (data.years || [])[yearIdx]; if (y) termSel[y.label] = tb.dataset.term; render(); return; }
   const tabBtn = e.target.closest("nav.tabs button");
-  if (tabBtn) { tab = tabBtn.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  if (tabBtn) { tab = tabBtn.dataset.tab; showSettings = false; askClearDone = false; render(); window.scrollTo(0, 0); return; }
   const check = e.target.closest(".check");
   if (check) {
     const strip = check.closest(".strip"), done = store.get("done", {}), k = strip.dataset.key;
@@ -980,8 +1110,10 @@ document.addEventListener("click", (e) => {
   const head = e.target.closest("[data-toggle]");
   if (head) { head.parentElement.classList.toggle("open"); return; }
   const nav = e.target.closest("[data-nav]");
-  if (nav) shiftPlan(Number(nav.dataset.nav));
+  if (nav) shiftPage(Number(nav.dataset.nav));
 });
+
+$("#gear").addEventListener("click", () => { showSettings = !showSettings; askClearDone = false; render(); window.scrollTo(0, 0); });
 
 $("#refresh").addEventListener("click", async () => {
   const b = $("#refresh"); b.disabled = true; $("#ricon").className = "spin";
