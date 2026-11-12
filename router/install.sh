@@ -10,6 +10,9 @@
 #   без LuCI (по умолчанию):  wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh
 #   с LuCI:                   wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh -s -- --luci
 #   убрать страницу LuCI:     ... | sh -s -- --no-luci
+#   с выходом в интернет:     ... | sh -s -- --remote     (после установки запускает router/remote.sh: Tailscale и постоянный адрес
+#                                                          для семьи; нужен пароль семьи, без него в интернет не выставляет;
+#                                                          ключи можно сочетать: sh -s -- --luci --remote)
 # Если страница LuCI уже стоит, при обновлении без ключей она тоже обновляется.
 #
 # Обновление до последней версии:   sh /root/dnevnik/router/install.sh
@@ -29,11 +32,13 @@ REPO="${REPO:-Rombaldo/dnevnik-OpenWRT}"
 REF="${REF:-main}"
 
 LUCI=auto
+REMOTE=0
 for arg in "$@"; do
     case "$arg" in
         --luci) LUCI=1 ;;
         --no-luci) LUCI=0 ;;
-        *) echo "ОШИБКА: неизвестный ключ $arg (бывают --luci и --no-luci)" >&2; exit 2 ;;
+        --remote) REMOTE=1 ;;
+        *) echo "ОШИБКА: неизвестный ключ $arg (бывают --luci, --no-luci и --remote)" >&2; exit 2 ;;
     esac
 done
 
@@ -86,7 +91,7 @@ fi
 tar tzf "$TMP/src.tar.gz" >/dev/null 2>&1 || die "архив повреждён"
 mkdir -p "$TMP/x" && tar xzf "$TMP/src.tar.gz" -C "$TMP/x"
 SRC=$(find "$TMP/x" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-for f in core.py auth.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/auth.cgi router/data.cgi router/password.py router/setname.sh; do
+for f in core.py auth.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/auth.cgi router/data.cgi router/password.py router/doctor.py router/remote.sh router/setname.sh; do
     [ -f "$SRC/$f" ] || die "в архиве нет файла $f"
 done
 if [ "$LUCI" = "1" ]; then
@@ -159,4 +164,21 @@ if [ "$NAME_OK" = "1" ]; then
     echo "    Страница: http://dnevnik.$DOMAIN   (запасной адрес: http://$LANIP:8765)"
 else
     echo "    Страница: http://$LANIP:8765   (имя dnevnik.$DOMAIN пока не заработало: выключите на телефоне «Частный DNS»/«Защищённый DNS» или пользуйтесь адресом с цифрами)"
+fi
+
+# 6. Проверка, что всё работает (только показывает замечания; ничего не меняет)
+echo
+say "Проверяю, что всё работает…"
+python3 "$APP/router/doctor.py" --summary || true
+echo "    Полная проверка в любой момент: python3 $APP/router/doctor.py   (или кнопка в LuCI: Службы → Дневник)"
+
+# 7. Выход в интернет (по желанию, ключ --remote)
+if [ "$REMOTE" = "1" ]; then
+    echo
+    say "Настраиваю выход в интернет (Tailscale)…"
+    sh "$APP/router/remote.sh" install
+    exit $?
+else
+    echo
+    echo "    Чтобы дневник открывался не только дома: wget -qO- https://raw.githubusercontent.com/$REPO/$REF/router/install.sh | sh -s -- --remote"
 fi

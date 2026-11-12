@@ -3,7 +3,7 @@
 		"description": "Дневник: состояние, обновление, настройки",
 		"read": {
 			"ubus": {
-				"luci.dnevnik": [ "status", "log", "check_update" ]
+				"luci.dnevnik": [ "status", "log", "check_update", "remote_info", "doctor" ]
 			}
 		},
 		"write": {

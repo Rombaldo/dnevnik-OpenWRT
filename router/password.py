@@ -4,6 +4,7 @@
     python3 /root/dnevnik/router/password.py status         включён ли пароль
     python3 /root/dnevnik/router/password.py set 'пароль' ['подсказка']   задать или заменить (все устройства войдут заново)
                                                             подсказку видит каждый на экране входа: сам пароль в ней писать нельзя
+    DNEVNIK_NEW_PASSWORD='пароль' DNEVNIK_NEW_HINT='подсказка' python3 …/password.py set-env   то же, без пароля в списке процессов
     python3 /root/dnevnik/router/password.py off            отключить пароль (страница откроется всем, кто её видит)
 """
 import os
@@ -19,6 +20,10 @@ if args[:1] == ["status"] and len(args) == 1:
     print("Пароль семьи: включён" if auth.enabled(DATA) else "Пароль семьи: выключен (страница открыта всем, кто её видит)")
 elif args[:1] == ["set"] and len(args) in (2, 3):
     ok, message = auth.set_password(DATA, args[1], args[2] if len(args) == 3 else "")
+    print(message)
+    sys.exit(0 if ok else 1)
+elif args == ["set-env"]:                    # пароль и подсказка из DNEVNIK_NEW_PASSWORD и DNEVNIK_NEW_HINT: не попадают в список процессов
+    ok, message = auth.set_password(DATA, os.environ.get("DNEVNIK_NEW_PASSWORD", ""), os.environ.get("DNEVNIK_NEW_HINT", ""))
     print(message)
     sys.exit(0 if ok else 1)
 elif args == ["off"]:

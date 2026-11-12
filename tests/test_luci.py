@@ -78,7 +78,7 @@ class PluginTests(PluginCase):
         js = VIEW.read_text()
         for m in methods:
             self.assertIn(f"method: '{m}'", js, m)                                   # страница вызывает только существующие методы
-        self.assertEqual(set(acl["read"]["ubus"]["luci.dnevnik"]), {"status", "log", "check_update"})   # чтение только безвредное
+        self.assertEqual(set(acl["read"]["ubus"]["luci.dnevnik"]), {"status", "log", "check_update", "remote_info", "doctor"})   # чтение только безвредное: «проверить всё» ничего не меняет
 
     def test_family_password_methods(self):
         import auth
@@ -113,6 +113,53 @@ class PluginTests(PluginCase):
         shutil.copy(ROOT / "auth.py", self.home / "auth.py")
         self.call("family_set", {"password": "семейный-пароль-123"})
         self.assertEqual(oct((self.home / "data" / "auth.json").stat().st_mode & 0o777), "0o600")
+
+    def fake_tailscale(self, funnel=True):
+        """Подставной tailscale в PATH плагина."""
+        b = self.tmp / "bin"
+        b.mkdir(exist_ok=True)
+        text = "#!/bin/sh\ncase \"$1\" in\n  status) echo '{\"BackendState\": \"Running\"}' ;;\n  funnel) " + (
+            "printf 'https://dnevnik.example.ts.net (Funnel on)\\n|-- / proxy http://127.0.0.1:8765\\n'" if funnel else "echo 'No serve config'") + " ;;\nesac\n"
+        (b / "tailscale").write_text(text)
+        (b / "tailscale").chmod(0o755)
+        self.env["PATH"] = f"{b}:{self.env['PATH']}"
+
+    def test_remote_info_without_tailscale(self):
+        shutil.copy(ROOT / "router" / "doctor.py", self.home / "router" / "doctor.py")
+        b = self.tmp / "emptybin"
+        b.mkdir()
+        self.env["PATH"] = f"{b}:/usr/bin:/bin"                                              # tailscale здесь нет
+        r = self.call("remote_info")
+        self.assertTrue(r["ok"])
+        self.assertEqual((r["installed"], r["funnel"], r["url"], r["proxy"]), (False, False, "", ""))
+        self.assertTrue(r["command"].endswith("router/remote.sh"))
+
+    def test_remote_info_with_funnel_and_proxy(self):
+        shutil.copy(ROOT / "router" / "doctor.py", self.home / "router" / "doctor.py")
+        self.fake_tailscale(True)
+        init = self.tmp / "ts-init"
+        init.write_text("procd_append_param env HTTPS_PROXY=http://127.0.0.1:1 HTTP_PROXY=http://127.0.0.1:1\n")
+        self.env["DNEVNIK_TS_INIT"] = str(init)
+        r = self.call("remote_info")
+        self.assertEqual((r["installed"], r["state"], r["funnel"], r["url"]), (True, "Running", True, "https://dnevnik.example.ts.net/"))
+        self.assertEqual((r["proxy"], r["proxyAlive"]), ("127.0.0.1:1", False))
+
+    def test_remote_info_without_the_helper_file_is_a_clear_answer(self):
+        r = self.call("remote_info")                                                         # doctor.py в тестовой папке нет
+        self.assertFalse(r["ok"])
+        self.assertIn("Обновите программу", r["message"])
+        self.assertFalse(self.call("doctor")["ok"])
+
+    def test_doctor_method_returns_results_and_summary(self):
+        shutil.copy(ROOT / "router" / "doctor.py", self.home / "router" / "doctor.py")
+        self.fake_tailscale(False)
+        self.env["DNEVNIK_PORT"] = "1"
+        r = self.call("doctor")
+        self.assertTrue(r["ok"], r)
+        ids = {c["id"] for c in r["results"]}
+        self.assertTrue({"system", "web", "cron", "internet", "family"} <= ids)
+        self.assertIn(r["summary"]["verdict"], ("ok", "notes", "problems"))
+        self.assertTrue(all(set(c) >= {"id", "status", "title", "detail", "fix"} for c in r["results"]))
 
     def test_password_methods_are_write_only(self):
         acl = json.loads(ACL.read_text())["luci-app-dnevnik"]
@@ -528,6 +575,75 @@ class ViewTests(unittest.TestCase):
         page.click("button:has-text('Задать пароль')")
         page.wait_for_function("window.calls.some(c => c[0] === 'family_set')")
         self.assertEqual(page.evaluate("window.calls.find(c => c[0] === 'family_set')[1]"), ["я", ""])
+
+    def test_remote_card_when_funnel_is_on(self):
+        page = self.open(answers={"remote_info": {"ok": True, "installed": True, "state": "Running", "funnel": True, "url": "https://dnevnik.example.ts.net/",
+                                                  "proxy": "127.0.0.1:7890", "proxyAlive": True, "family": True, "command": "/root/dnevnik/router/remote.sh"}})
+        text = page.inner_text(".dn")
+        for needle in ("Доступно из интернета", "Tailscale: Running", "через прокси 127.0.0.1:7890", "Проверить всё", "Приглашение для семьи"):
+            self.assertIn(needle, text)
+        self.assertEqual(page.get_attribute("a:has-text('dnevnik.example.ts.net')", "href"), "https://dnevnik.example.ts.net/")
+        self.assertFalse(page.is_visible("text=Чтобы дневник открывался не только дома"))      # включено, объяснять нечего
+        self.assertEqual(self.errors, [])
+
+    def test_remote_card_when_not_installed_shows_the_command(self):
+        page = self.open(answers={"remote_info": {"ok": True, "installed": False, "state": "", "funnel": False, "url": "", "proxy": "", "command": "/root/dnevnik/router/remote.sh"}})
+        self.assertIn("Только дома", page.inner_text(".dn"))
+        self.assertIn("--remote", page.inner_text(".dn-code"))
+        self.assertTrue(page.is_disabled("button:has-text('Приглашение для семьи')"))          # приглашать пока некуда
+
+    def test_remote_card_when_installed_but_funnel_is_off_shows_the_short_command(self):
+        page = self.open(answers={"remote_info": {"ok": True, "installed": True, "state": "Running", "funnel": False, "url": "", "proxy": "", "command": "/root/dnevnik/router/remote.sh"}})
+        self.assertIn("Не включено", page.inner_text(".dn"))
+        self.assertEqual(page.inner_text(".dn-code"), "sh /root/dnevnik/router/remote.sh")
+
+    def test_proxy_that_does_not_answer_is_shown_as_a_warning(self):
+        page = self.open(answers={"remote_info": {"ok": True, "installed": True, "state": "Running", "funnel": True, "url": "https://dnevnik.example.ts.net/",
+                                                  "proxy": "127.0.0.1:7890", "proxyAlive": False, "command": "x"}})
+        self.assertIn("прокси не отвечает", page.inner_text(".dn"))
+
+    def test_invitation_text_has_the_address_and_no_password(self):
+        page = self.open(answers={"remote_info": {"ok": True, "installed": True, "state": "Running", "funnel": True, "url": "https://dnevnik.example.ts.net/",
+                                                  "proxy": "", "command": "x", "family": True}})
+        self.assertFalse(page.is_visible("textarea"))
+        page.click("button:has-text('Приглашение для семьи')")
+        page.wait_for_selector("textarea", state="visible")
+        text = page.input_value("textarea")
+        for needle in ("https://dnevnik.example.ts.net/", "Ничего устанавливать не нужно", "На экран Домой", "2–3 попытки", "пароль семьи"):
+            self.assertIn(needle, text)
+        self.assertNotRegex(text, r"(?i)пароль:\s*\S")                                          # самого пароля в приглашении нет
+
+    def test_doctor_button_shows_results_with_fixes(self):
+        res = {"ok": True, "address": "", "summary": {"ok": 1, "warn": 1, "fail": 1, "info": 0, "verdict": "problems"}, "results": [
+            {"id": "web", "status": "ok", "title": "Страница дневника на роутере", "detail": "отвечает", "fix": ""},
+            {"id": "family", "status": "warn", "title": "Пароль семьи", "detail": "не задан", "fix": "задайте пароль"},
+            {"id": "internet", "status": "fail", "title": "Связь роутера с dnevnik.ru", "detail": "нет", "fix": "проверьте интернет"}]}
+        page = self.open(answers={"doctor": res})
+        page.click("button:has-text('Проверить всё')")
+        page.wait_for_selector(".dn-chk")
+        rows = page.eval_on_selector_all(".dn-chk", "e => e.map(x => x.className + '|' + x.textContent)")
+        self.assertEqual(len(rows), 3)
+        self.assertIn("dn-chk fail", rows[2])
+        self.assertIn("Что делать: проверьте интернет", rows[2])
+        self.assertNotIn("Что делать", rows[0])                                                  # у зелёного пункта советов нет
+        self.assertIn("есть проблемы", page.inner_text(".dn-note.bad").lower())
+        self.assertEqual(self.errors, [])
+
+    def test_doctor_failure_is_shown(self):
+        page = self.open(answers={"doctor": {"ok": False, "message": "Проверка не удалась: тест"}})
+        page.click("button:has-text('Проверить всё')")
+        page.wait_for_selector(".dn-note.bad")
+        self.assertIn("Проверка не удалась", page.inner_text(".dn-note.bad"))
+        self.assertFalse(page.is_disabled("button:has-text('Проверить всё')"))                    # кнопка снова доступна
+
+    def test_doctor_text_from_the_router_is_not_executed(self):
+        evil = '<img src=x onerror="window.pwned=1">'
+        res = {"ok": True, "address": "", "summary": {"verdict": "notes"}, "results": [{"id": "x", "status": "warn", "title": evil, "detail": evil, "fix": evil}]}
+        page = self.open(answers={"doctor": res, "remote_info": {"ok": True, "installed": True, "funnel": True, "url": "https://x.ts.net/", "proxy": evil, "state": evil}})
+        page.click("button:has-text('Проверить всё')")
+        page.wait_for_selector(".dn-chk")
+        self.assertIsNone(page.query_selector(".dn img"))
+        self.assertIsNone(page.evaluate("window.pwned"))
 
     def test_family_set_error_from_server_is_shown(self):
         page = self.open(answers={"family_set": {"ok": False, "message": "Подсказка не должна содержать сам пароль."}})

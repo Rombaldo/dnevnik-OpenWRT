@@ -17,7 +17,9 @@ var call = {
 	logout_confirm: rpc.declare({ object: 'luci.dnevnik', method: 'logout_confirm', params: [ 'token' ] }),
 	logout_restore: rpc.declare({ object: 'luci.dnevnik', method: 'logout_restore' }),
 	family_set: rpc.declare({ object: 'luci.dnevnik', method: 'family_set', params: [ 'password', 'hint' ] }),
-	family_off: rpc.declare({ object: 'luci.dnevnik', method: 'family_off' })
+	family_off: rpc.declare({ object: 'luci.dnevnik', method: 'family_off' }),
+	remote_info: rpc.declare({ object: 'luci.dnevnik', method: 'remote_info' }),
+	doctor: rpc.declare({ object: 'luci.dnevnik', method: 'doctor' })
 };
 
 var STYLE =
@@ -38,6 +40,11 @@ var STYLE =
 	'.dn-pform{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr);gap:10px 12px;align-items:center;font-size:14px;margin-top:12px}' +
 	'.dn-pform input{max-width:320px;min-width:0}' +
 	'@media(max-width:600px){.dn-pform{grid-template-columns:minmax(0,1fr)}.dn-pform input{max-width:none;width:100%}}' +
+	'.dn-chk{padding:7px 0;border-top:1px solid var(--dn-line);font-size:13px;overflow-wrap:anywhere}.dn-chk:first-child{border-top:0}' +
+	'.dn-chk.ok{color:var(--dn-ok)}.dn-chk.warn{color:var(--dn-warn)}.dn-chk.fail{color:var(--dn-bad)}.dn-chk.info{color:var(--dn-muted)}' +
+	'.dn-fix{color:inherit;opacity:.9;margin:2px 0 0 18px;font-size:12px}' +
+	'.dn-invite{width:100%;min-height:190px;font-size:13px;margin-top:10px}' +
+	'.dn-code{font:12px monospace;background:var(--dn-soft);padding:6px 8px;border-radius:6px;overflow-wrap:anywhere;margin:6px 0 0}' +
 	'.dn-hint{color:var(--dn-muted);font-size:12px;margin:8px 0 0}' +
 	'.dn-log{max-height:260px;overflow:auto;font:12px monospace;white-space:pre-wrap;background:var(--dn-soft);padding:8px;border-radius:8px;margin:8px 0 0}';
 
@@ -70,7 +77,68 @@ return view.extend({
 	handleReset: null,
 
 	load: function() {
-		return Promise.all([ call.status(), call.log('sync') ]);
+		return Promise.all([ call.status(), call.log('sync'), call.remote_info() ]);
+	},
+
+	inviteText: function(url) {
+		return 'Дневник школьника: ' + url + '\n\n' +
+			'1. Откройте ссылку в браузере на телефоне или компьютере. Ничего устанавливать не нужно.\n' +
+			'2. Введите пароль семьи (его сообщит тот, кто настраивал дневник).\n' +
+			'3. Чтобы дневник был как приложение. iPhone: Safari → «Поделиться» → «На экран Домой». Android: Chrome → ⋮ → «Установить приложение» или «Добавить на главный экран».\n\n' +
+			'Если страница не открылась, обновите её ещё раз: иногда нужно 2–3 попытки.';
+	},
+
+	paintRemote: function(info) {
+		var r = this.refs, on = !!(info && info.funnel), installed = !!(info && info.installed);
+		this.remote = info || {};
+		r.rpill.className = 'dn-pill ' + (on ? 'ok' : 'warn');
+		r.rpill.textContent = on ? 'Доступно из интернета' : (installed ? 'Не включено' : 'Только дома');
+		r.rurl.textContent = on ? info.url : '—';
+		r.rurl.href = on ? info.url : '#';
+		r.rstate.textContent = !installed ? 'Tailscale не установлен' : 'Tailscale: ' + (info.state || 'нет ответа') +
+			(info.proxy ? '; через прокси ' + info.proxy + (info.proxyAlive ? '' : ' (прокси не отвечает!)') : '');
+		r.rhow.style.display = on ? 'none' : '';
+		r.rcmd.textContent = installed ? 'sh ' + (info.command || '/root/dnevnik/router/remote.sh')
+			: 'wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh -s -- --remote';
+		r.rinvite.disabled = !on;
+		if (!on) r.invite.style.display = 'none';
+	},
+
+	doInvite: function() {
+		var r = this.refs;
+		if (!this.remote || !this.remote.funnel) return;
+		r.invite.value = this.inviteText(this.remote.url);
+		r.invite.style.display = '';
+		r.invite.focus();
+		r.invite.select();
+		try { document.execCommand('copy'); this.say(r.rnote, 'ok', 'Текст приглашения выделен и скопирован: вставьте его в сообщение семье.'); }
+		catch (e) { this.say(r.rnote, 'ok', 'Текст приглашения выделен: скопируйте его (Ctrl+C) и вставьте в сообщение семье.'); }
+	},
+
+	doDoctor: function() {
+		var self = this, r = this.refs;
+		r.rdoc.disabled = true;
+		self.say(r.rnote, '', 'Проверяю (до 20 секунд)…');
+		return call.doctor().then(function(res) {
+			r.rdoc.disabled = false;
+			r.chk.textContent = '';
+			if (!res || !res.ok) return self.say(r.rnote, 'bad', (res && res.message) || 'Проверка не удалась.');
+			var mark = { ok: '✓', warn: '!', fail: '✗', info: '·' };
+			(res.results || []).forEach(function(c) {
+				var row = E('div', { 'class': 'dn-chk ' + c.status }, mark[c.status] + ' ' + c.title + (c.detail ? ': ' + c.detail : ''));
+				if (c.fix && (c.status === 'warn' || c.status === 'fail')) row.appendChild(E('div', { 'class': 'dn-fix' }, 'Что делать: ' + c.fix));
+				r.chk.appendChild(row);
+			});
+			var v = res.summary && res.summary.verdict;
+			self.say(r.rnote, v === 'ok' ? 'ok' : v === 'notes' ? 'warn' : 'bad',
+				v === 'ok' ? 'Всё работает.' : v === 'notes' ? 'Работает, но есть замечания (отмечены «!»).' : 'Есть проблемы (отмечены «✗»): что делать, написано под каждой.');
+			return self.refreshRemote();
+		});
+	},
+
+	refreshRemote: function() {
+		var self = this;
+		return call.remote_info().then(function(i) { self.paintRemote(i); });
 	},
 
 	pill: function(st) {
@@ -262,6 +330,19 @@ return view.extend({
 		r.fpw = E('input', { 'class': 'cbi-input-password', type: 'password', autocomplete: 'new-password', maxlength: 128 });
 		r.fpw2 = E('input', { 'class': 'cbi-input-password', type: 'password', autocomplete: 'new-password', maxlength: 128 });
 		r.fhint = E('input', { 'class': 'cbi-input-text', type: 'text', maxlength: 100, placeholder: 'например: имя собаки и год' });
+		r.rpill = E('span', { 'class': 'dn-pill' }, '…');
+		r.rurl = E('a', { href: '#', target: '_blank', rel: 'noopener' }, '—');
+		r.rstate = E('p', { 'class': 'dn-v' }, '');
+		r.rnote = E('div', { 'class': 'dn-note', style: 'display:none' });
+		r.chk = E('div', { 'class': 'dn-chks' });
+		r.rcmd = E('div', { 'class': 'dn-code' }, '');
+		r.rhow = E('div', {}, [
+			E('p', { 'class': 'dn-hint' }, 'Чтобы дневник открывался не только дома, выполните на роутере по SSH (нужен пароль семьи и бесплатный аккаунт Tailscale; команда сама скажет, что нажать в браузере):'),
+			r.rcmd
+		]);
+		r.invite = E('textarea', { 'class': 'dn-invite cbi-input-textarea', readonly: 'readonly', style: 'display:none' });
+		r.rdoc = E('button', { 'class': 'cbi-button cbi-button-action', click: function() { return self.doDoctor(); } }, 'Проверить всё');
+		r.rinvite = E('button', { 'class': 'cbi-button', click: function() { return self.doInvite(); } }, 'Приглашение для семьи');
 		r.fset = E('button', { 'class': 'cbi-button cbi-button-action', click: function() { return self.doFamilySet(); } }, 'Задать пароль');
 		r.foff = E('button', { 'class': 'cbi-button cbi-button-negative', style: 'display:none', click: function() { return self.doFamilyOff(); } }, 'Отключить пароль');
 
@@ -304,6 +385,13 @@ return view.extend({
 				r.fnote
 			]),
 			E('div', { 'class': 'dn-card' }, [
+				E('div', { 'class': 'dn-head' }, [ E('p', { 'class': 'dn-title' }, 'Доступ из интернета и проверка'), r.rpill ]),
+				E('div', { 'class': 'dn-grid' }, [ kv('Адрес для семьи', E('p', { 'class': 'dn-v' }, [ r.rurl ])), kv('Состояние', r.rstate) ]),
+				r.rhow,
+				E('div', { 'class': 'dn-btns' }, [ r.rdoc, r.rinvite ]),
+				r.rnote, r.invite, r.chk
+			]),
+			E('div', { 'class': 'dn-card' }, [
 				E('div', { 'class': 'dn-head' }, [ E('p', { 'class': 'dn-title' }, 'Настройки') ]),
 				E('div', { 'class': 'dn-form' }, [
 					E('label', {}, 'Обновлять'), r.every,
@@ -322,6 +410,7 @@ return view.extend({
 		]);
 
 		this.paint(st);
+		this.paintRemote(data[2]);
 		poll.add(function() { return self.poll(); }, 5);
 		return node;
 	}

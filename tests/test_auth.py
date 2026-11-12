@@ -470,6 +470,16 @@ class RouterCgiTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(auth.check_password(self.home / "data", PASSWORD))
         self.assertIn("включён", cli("status").stdout)
+        def cli_env(pw, hint=""):
+            return subprocess.run([sys.executable, str(ROUTER / "password.py"), "set-env"], capture_output=True, text=True,
+                                  env={"PATH": os.environ["PATH"], "DNEVNIK_HOME": str(self.home), "PYTHONPATH": str(ROOT),
+                                       "DNEVNIK_NEW_PASSWORD": pw, "DNEVNIK_NEW_HINT": hint})
+        r = cli_env("пароль из окружения", "кличка")                                            # так задаёт пароль установка с компьютера
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(auth.check_password(self.home / "data", "пароль из окружения"))
+        self.assertEqual(auth.get_hint(self.home / "data"), "кличка")
+        self.assertEqual(cli_env("  ").returncode, 1)                                          # пустой пароль нельзя и так
+        self.assertEqual(cli_env("абв", "тут абв").returncode, 1)                              # подсказка с паролем нельзя и так
         self.assertEqual(cli("set", " ").returncode, 1)                                        # пустой пароль нельзя
         self.assertEqual(cli("set", "я").returncode, 0)                                         # а из одного символа можно
         self.assertTrue(auth.check_password(self.home / "data", "я"))

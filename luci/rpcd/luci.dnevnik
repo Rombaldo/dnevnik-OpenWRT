@@ -2,9 +2,11 @@
 """Серверная часть страницы «Службы → Дневник» в LuCI (rpcd-плагин, ubus-объект luci.dnevnik).
 Показывает состояние, обновляет данные, меняет расписание и имя, проверяет и ставит новую версию, делает выход из аккаунта.
 Работает только когда страницу открыли в LuCI: сам ничего не запускает и в памяти не живёт."""
+import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -279,11 +281,44 @@ def family_off(_):
     return {"ok": True, "message": "Пароль отключён: страницу открывает любой, кто до неё доберётся."}
 
 
+def load_doctor():
+    """Помощник «Проверить всё» лежит рядом с программой (router/doctor.py), здесь только вызывается."""
+    path = os.path.join(HOME, "router", "doctor.py")
+    spec = importlib.util.spec_from_file_location("dnevnik_doctor", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def remote_info(_):
+    """Состояние выхода в интернет: Tailscale, Funnel, адрес, прокси. Страница запрашивает один раз, а не каждые 5 секунд."""
+    try:
+        d = load_doctor()
+    except Exception as e:
+        return {"ok": False, "message": f"Не найден помощник проверки: {type(e).__name__}. Обновите программу."}
+    installed = bool(shutil.which("tailscale"))
+    on, url = d.funnel_info() if installed else (False, "")
+    proxy, alive = d.proxy_info() if installed else (None, False)
+    state = ((d.tailscale_state() or {}).get("BackendState") or "") if installed else ""
+    return {"ok": True, "installed": installed, "state": state, "funnel": on, "url": url, "proxy": proxy or "", "proxyAlive": alive,
+            "family": d.family_enabled(), "command": os.path.join(HOME, "router", "remote.sh")}
+
+
+def doctor(_):
+    try:
+        d = load_doctor()
+        results, url = d.run_checks()
+        return {"ok": True, "results": [r.as_dict() for r in results], "summary": d.summarize(results), "address": url}
+    except Exception as e:
+        return {"ok": False, "message": f"Проверка не удалась: {type(e).__name__}: {e}"}
+
+
 METHODS = {
     "status": (status, {}), "log": (log, {"which": ""}), "refresh": (refresh, {}), "check_update": (check_update, {}),
     "update": (update, {}), "set_config": (set_config, {"every": 0, "from": 0, "to": 0, "name": ""}),
     "logout_begin": (logout_begin, {}), "logout_confirm": (logout_confirm, {"token": ""}), "logout_restore": (logout_restore, {}),
     "family_set": (family_set, {"password": "", "hint": ""}), "family_off": (family_off, {}),
+    "remote_info": (remote_info, {}), "doctor": (doctor, {}),
 }
 
 
