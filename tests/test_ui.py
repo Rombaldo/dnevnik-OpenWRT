@@ -136,7 +136,7 @@ class UiSmokeTests(unittest.TestCase):
             y["final"] = [{"name": evil, "periods": [evil, evil, evil], "year": evil}]
         ctx = self.browser.new_context(viewport={"width": 375, "height": 812})
         page = ctx.new_page()
-        page.route("**/data.json", lambda route: route.fulfill(json=d))
+        page.route("**/cgi-bin/data", lambda route: route.fulfill(json=d))
         page.goto(self.url)
         page.wait_for_selector("nav.tabs")
         for tab in ("hw", "marks", "plan"):
@@ -166,7 +166,7 @@ class UiSmokeTests(unittest.TestCase):
         page = ctx.new_page()
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
-        page.route("**/data.json", lambda route: route.fulfill(json=data() if callable(data) else data))
+        page.route("**/cgi-bin/data", lambda route: route.fulfill(json=data() if callable(data) else data))
         if setup:
             page.route("**/cgi-bin/setup", setup)
         if logout:
@@ -335,7 +335,7 @@ class UiSmokeTests(unittest.TestCase):
         self.click_logout_link(page)
         page.click('[data-confirm="yes"]')
         page.wait_for_function("!document.querySelector('[data-confirm=yes]').disabled", timeout=8000)
-        page.route("**/data.json", lambda route: route.abort())                  # связь пропала: страница возьмёт то, что помнит устройство
+        page.route("**/cgi-bin/data", lambda route: route.abort())                  # связь пропала: страница возьмёт то, что помнит устройство
         page.click('[data-confirm="yes"]')
         page.wait_for_function("!document.querySelector('.day')")
         self.assertTrue(state["out"])

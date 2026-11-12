@@ -359,6 +359,39 @@ try { const s = JSON.parse(localStorage.getItem("settings") || "{}");
   .setbtn { display: block; width: 100%; min-height: 52px; margin-top: 10px; border: 2px solid var(--line); border-radius: 14px; background: transparent; font-size: 17px; font-weight: 700; color: var(--ink); }
   .setbtn.danger { border-color: var(--banner-bad-ink); color: var(--banner-bad-ink); }
   .setbtn.asked { background: var(--banner-bad-bg); }
+  .set-card input.pw { display: block; width: 100%; min-height: 50px; margin-top: 8px; padding: 8px 14px; font-size: 18px; border-radius: 14px;
+    border: 2px solid var(--line); background: var(--bg); color: var(--ink); }
+  .set-card input.pw:focus { outline: none; border-color: var(--brand); }
+  .set-card .msg { margin-top: 10px; padding: 10px 12px; border-radius: 12px; font-size: 15px; }
+  .set-card .msg.bad { background: var(--banner-bad-bg); color: var(--banner-bad-ink); }
+  .set-card .msg.good { background: var(--ok-soft); color: var(--ok); font-weight: 700; }
+  .setbtn.main { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+  body.locked nav.tabs, body.locked #gear, body.locked #refresh { display: none !important; }
+  /* ---- карточка оценки ---- */
+  .tap { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .row.tap:active { opacity: .7; }
+  .mark.tap:active { transform: scale(.94); }
+  .tap:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; border-radius: 12px; }
+  .markmodal { max-width: 460px; padding: 20px 20px 18px; max-height: 92vh; overflow: auto; }
+  .mm-head { display: flex; align-items: flex-start; gap: 12px; }
+  .mm-head h3 { margin: 0; font-size: 24px; }
+  .mm-sub { color: var(--muted); font-size: 16px; margin-top: 2px; }
+  .mm-x { margin-left: auto; width: 44px; height: 44px; min-width: 44px; border: 0; border-radius: 50%; background: var(--soft); color: var(--muted); font-size: 20px; }
+  .mm-line { margin: 14px 0 0; font-size: 18px; line-height: 1.35; }
+  .mm-line .k { color: var(--muted); }
+  .mm-theme { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }
+  .mm-box { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 14px; padding: 16px 10px; border-radius: 20px; background: var(--bg); text-align: center; }
+  .mm-box b { display: block; font-size: 16px; margin-bottom: 10px; }
+  .mm-big { display: inline-flex; align-items: center; justify-content: center; width: 84px; height: 84px; border-radius: 50%; font-size: 40px; font-weight: 800; color: #fff; background: var(--muted); }
+  .mm-avg { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 112px; height: 52px; padding: 0 14px; border-radius: 99px; font-size: 24px; font-weight: 800; color: #fff; background: var(--muted); margin-top: 16px; }
+  .mm-note { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .mm-big.m5, .mm-avg.m5 { background: var(--m5); }
+  .mm-big.m4, .mm-avg.m4 { background: var(--m4); }
+  .mm-big.m3, .mm-avg.m3 { background: var(--m3); }
+  .mm-big.m2, .mm-avg.m2 { background: var(--m2); }
+  .mm-big.m1, .mm-avg.m1 { background: var(--m1); }
+  .markmodal .mbtns { margin-top: 4px; }
+  .att-sub { color: var(--muted); font-size: 14px; }
 </style>
 </head>
 <body>
@@ -453,9 +486,12 @@ async function load() {
     return render();
   }
   try {
-    const r = await fetch("data.json", { cache: "no-store" });
-    if (!r.ok) throw new Error(r.status);
-    data = await r.json();
+    const r = await fetch("cgi-bin/data", { cache: "no-store" });
+    let body = null; try { body = await r.json(); } catch {}
+    if (r.status === 401 || body?.auth === true) { locked = true; data = null; config = {}; showSettings = false; await loadHint(); return render(); }   // нужен пароль семьи
+    if (!r.ok || !body) throw new Error(r.status);
+    locked = false;
+    data = body;
     store.set("cache", data);
     banner = "";
   } catch {
@@ -508,6 +544,7 @@ async function submitSetup(form) {
   try {
     const r = await fetch("cgi-bin/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login, password }) });
     res = await r.json();
+    if (noteLocked(r, res)) return;
   } catch { res = { ok: false, message: "Не получилось связаться с роутером. Проверьте Wi-Fi и попробуйте снова." }; }
   form.password.value = "";
   setupMsg = { ok: !!res.ok, text: res.message || "Не получилось." };
@@ -520,7 +557,7 @@ async function waitForDiary() {            // ждём до ~2.5 минут, п�
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 4000));
     try {
-      const d = await (await fetch("data.json", { cache: "no-store" })).json();
+      const d = await (await fetch("cgi-bin/data", { cache: "no-store" })).json();
       if (d.days?.length && !d.status?.needLogin) { data = d; store.set("cache", d); break; }
     } catch {}
   }
@@ -539,10 +576,14 @@ async function restoreLogin() {            // вернуть вход, кото�
 
 // ---------- Смена логина и пароля: два подтверждения подряд, чтобы нельзя было нажать случайно ----------
 let confirmStep = 0, confirmReadyAt = 0, confirmBusy = false, confirmError = "", logoutToken = null;
+// Семейный пароль: locked = сервер просит пароль; passForm = какая форма открыта в «Настройках» (set / change / disable)
+let locked = false, lockMsg = null, lockBusy = false, lockHint = "", passForm = null, passMsg = null, passBusy = false;
 async function api(path, body) {
   try {
     const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    return await r.json();
+    const j = await r.json();
+    noteLocked(r, j);
+    return j;
   } catch { return { ok: false, message: "Не получилось связаться с роутером. Проверьте Wi-Fi и попробуйте снова." }; }
 }
 function confirmModal() {
@@ -583,7 +624,11 @@ async function finishLogout() {                      // второе подтв�
   await load();
   window.scrollTo(0, 0);
 }
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && confirmStep && !confirmBusy) closeConfirm(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { if (markKey) { markKey = null; showMarkModal(); } else if (confirmStep && !confirmBusy) closeConfirm(); return; }
+  const mk = e.target.closest?.("[data-mark]");                                    // оценки — кнопки: открываются и с клавиатуры
+  if (mk && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); markKey = mk.dataset.mark; showMarkModal(); }
+});
 
 function statusBanner() {
   let h = banner;
@@ -603,6 +648,12 @@ function greeting() {
 }
 
 function render() {
+  document.body.classList.toggle("locked", locked);
+  if (locked) {                                    // сервер просит пароль семьи: ничего из дневника не показываем
+    $("#hello").textContent = "Мой дневник"; $("#who").textContent = ""; $("#updated").textContent = ""; $("#modal").innerHTML = "";
+    $("#main").innerHTML = lockCard();
+    return;
+  }
   $("#hello").textContent = greeting();
   const st = data?.student;
   $("#who").textContent = st?.name ? `${st.name}${st.school ? ` (${st.school})` : ""}` : "";
@@ -613,7 +664,8 @@ function render() {
   $("#refresh").style.display = window.__DATA__ ? "none" : "";
   $("#gear").classList.toggle("on", showSettings);
   document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", !showSettings && b.dataset.tab === tab));
-  $("#modal").innerHTML = confirmModal();
+  $("#modal").innerHTML = confirmModal() || markModal();
+  if (markKey && !confirmStep) { const x = document.querySelector("#modal .mm-x"); if (x && !document.activeElement?.closest("#modal")) x.focus(); }
   if (confirmStep) {
     const safe = document.querySelector("#modal .safe");
     if (safe && document.activeElement !== safe) safe.focus();                    // по умолчанию выбрана безопасная кнопка
@@ -635,6 +687,96 @@ function render() {
     body = `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
   }
   $("#main").innerHTML = (showSetup && !setupWait ? "" : statusBanner()) + body + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
+}
+
+// ---------- Семейный пароль ----------
+function noteLocked(r, body) {                     // ответ «нужен пароль» от любого запроса: показываем экран входа
+  if (body?.auth === true) { locked = true; lockMsg = null; showSettings = false; render(); loadHint().then(() => { if (locked && !lockBusy) render(); }); return true; }
+  return false;
+}
+async function loadHint() {                        // подсказка к паролю открыта всем: её показываем на экране входа
+  try {
+    const r = await fetch("cgi-bin/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "status" }) });
+    lockHint = String((await r.json()).hint || "");
+  } catch { lockHint = ""; }
+}
+function lockCard() {
+  const msg = lockMsg ? `<div class="msg ${lockMsg.ok ? "good" : "bad"}">${esc(lockMsg.text)}</div>` : "";
+  return `<div class="card setup"><h2>Пароль семьи</h2>
+    <p>Этот дневник закрыт паролем. Введите пароль, который знает семья.</p>
+    ${lockHint ? `<p><b>Подсказка:</b> ${esc(lockHint)}</p>` : ""}
+    <form id="lock-form" autocomplete="on">
+      <label for="l-pass">Пароль</label>
+      <input id="l-pass" name="password" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" ${lockBusy ? "disabled" : ""}>
+      <button class="go" type="submit" ${lockBusy ? "disabled" : ""}>${lockBusy ? "Проверяю…" : "Войти"}</button>
+    </form>${msg}
+    <details><summary>Забыли пароль?</summary>
+      <p>Новый пароль может задать тот, кто управляет роутером: в веб-интерфейсе роутера, в разделе «Службы → Дневник → Пароль семьи». Старый пароль знать не нужно, а все устройства потом войдут заново.
+      Сбросить пароль прямо на этой странице нельзя: иначе это мог бы сделать кто угодно.</p></details>
+    <p class="fine">Устройство запомнит пароль на полгода.</p></div>`;
+}
+async function submitLock(form) {
+  const password = form.password.value;
+  if (!password) { lockMsg = { ok: false, text: "Введите пароль." }; return render(); }
+  lockBusy = true; lockMsg = null; render();
+  const r = await api("cgi-bin/auth", { action: "login", password });
+  lockBusy = false;
+  if (r.ok) { lockMsg = null; locked = false; return load(); }
+  lockMsg = { ok: false, text: r.message || "Не получилось." };
+  render();
+  const input = $("#l-pass"); if (input) input.focus();
+}
+function passCard() {
+  const on = !!data?.status?.family;
+  const field = (id, label, auto) => `<label for="${id}" class="hint" style="display:block;margin-top:10px">${label}</label>
+    <input class="pw" id="${id}" name="${id}" type="password" autocomplete="${auto}" autocapitalize="none" autocorrect="off" spellcheck="false">`;
+  const msg = passMsg ? `<div class="msg ${passMsg.ok ? "good" : "bad"}">${esc(passMsg.text)}</div>` : "";
+  const curHint = data?.status?.familyHint || "";
+  const hintField = `<label for="p-hint" class="hint" style="display:block;margin-top:10px">Подсказка к паролю (по желанию). Её видит каждый на экране входа, поэтому сам пароль в ней не пишите.</label>
+    <input class="pw" id="p-hint" name="p-hint" type="text" maxlength="100" autocomplete="off" value="${esc(passForm === "set" ? "" : curHint)}">`;
+  let body;
+  if (passForm) {
+    const needCur = passForm !== "set", needNew = passForm === "set" || passForm === "change";
+    body = `<form id="pass-form">
+      ${needCur ? field("p-cur", "Текущий пароль", "current-password") : ""}
+      ${needNew ? field("p-new", "Новый пароль (любой, хоть один символ)", "new-password") + field("p-new2", "Новый пароль ещё раз", "new-password") : ""}
+      ${needNew ? `<p class="hint" style="margin:8px 0 0">Короткий пароль легко подобрать, особенно если дневник открыт из интернета.</p>` : ""}
+      ${passForm !== "disable" ? hintField : ""}
+      <button class="setbtn main" type="submit" ${passBusy ? "disabled" : ""}>${passBusy ? "Сохраняю…" : passForm === "disable" ? "Отключить пароль" : passForm === "hint" ? "Сохранить подсказку" : "Сохранить пароль"}</button>
+      <button class="setbtn" type="button" data-pass="cancel">Отмена</button></form>${msg}`;
+  } else if (on) {
+    body = `<p class="hint">Включён. Без пароля дневник не открывается, даже по ссылке. Каждое устройство вводит его один раз.${curHint ? ` Подсказка: «${esc(curHint)}».` : " Подсказки нет."}</p>
+      <button class="setbtn" data-pass="change">Сменить пароль</button>
+      <button class="setbtn" data-pass="hint">Изменить подсказку</button>
+      <button class="setbtn" data-pass="logout">Выйти на этом устройстве</button>
+      <button class="setbtn danger" data-pass="disable">Отключить пароль</button>${msg}`;
+  } else {
+    body = `<p class="hint">Не задан: дневник видит любой, кто откроет страницу. Если дневник можно открыть вне дома, обязательно задайте пароль.</p>
+      <button class="setbtn main" data-pass="set">Задать пароль для семьи</button>${msg}`;
+  }
+  return `<div class="set-card"><h2>Пароль для семьи</h2>${body}</div>`;
+}
+async function submitPass(form) {
+  const cur = form["p-cur"]?.value || "", n1 = form["p-new"]?.value || "", n2 = form["p-new2"]?.value || "", hint = form["p-hint"]?.value || "";
+  if (passForm === "set" || passForm === "change") {
+    if (!n1.trim()) { passMsg = { ok: false, text: "Введите пароль." }; return render(); }
+    if (n1 !== n2) { passMsg = { ok: false, text: "Пароли не совпадают." }; return render(); }
+  }
+  passBusy = true; passMsg = null; render();
+  const r = await api("cgi-bin/auth", passForm === "disable" ? { action: "disable", current: cur }
+    : passForm === "hint" ? { action: "hint", current: cur, hint } : { action: "set", current: cur, password: n1, hint });
+  passBusy = false;
+  if (locked) return;
+  if (!r.ok) { passMsg = { ok: false, text: r.message || "Не получилось." }; return render(); }
+  const did = passForm;
+  passForm = null; passMsg = { ok: true, text: did === "disable" ? "Пароль отключён. Дневник снова открыт всем, кто видит эту страницу." : did === "hint" ? "Подсказка сохранена." : "Готово. Остальные устройства попросят новый пароль." };
+  await load();
+  showSettings = true; render();
+}
+async function passLogout() {                      // выйти на этом устройстве: пароль снова понадобится
+  await api("cgi-bin/auth", { action: "logout" });
+  try { localStorage.removeItem("cache"); localStorage.removeItem("done"); } catch {}
+  passForm = null; passMsg = null; showSettings = false; locked = true; lockMsg = null; data = null; render();
 }
 
 // ---------- Экран «Настройки» ----------
@@ -659,6 +801,7 @@ function settingsView() {
     <div class="set-card"><h2>Порядок</h2>
       <button class="setbtn ${askClearDone ? "asked" : ""}" data-clear-done>${askClearDone ? "Точно снять все отметки? Нажмите ещё раз" : "Снять все отметки «сделано»"}</button>
       <button class="setbtn" data-reset-settings>Сбросить настройки</button></div>
+    ${window.__DATA__ || typeof data?.status?.family !== "boolean" ? "" : passCard()}
     ${canLogout ? `<div class="set-card"><h2>Аккаунт</h2><p class="hint">Вход в Дневник.ру хранится на роутере.</p>
       <button class="setbtn danger" data-change-login>Выйти из аккаунта</button></div>` : ""}
     ${data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : ""}</div>`;
@@ -672,10 +815,13 @@ function focusDate() {
   return days.find((d) => d.date > today)?.date ?? null;
 }
 const cls = (v) => ({ 5: "m5", 4: "m4", 3: "m3", 2: "m2", 1: "m1" }[String(v).trim()] ?? "");
+const markKeyOf = (date, li, mi) => `${date}|${li}|${mi}`;     // где искать оценку: день, номер урока в дне, номер оценки в уроке
+// Оценка в строке урока (Домашка, Расписание): нажатие открывает карточку оценки
+const tapMark = (date, li, mi, m, subject) => `<span class="mark sm tap ${cls(m.value)}" role="button" tabindex="0" data-mark="${esc(markKeyOf(date, li, mi))}" aria-label="Оценка ${esc(m.value)}, ${esc(subject)}: подробности">${esc(m.value)}</span>`;
 function allMarks() {
   const out = [];
-  for (const d of data.days) for (const l of d.lessons) for (const m of l.marks)
-    out.push({ date: d.date, subject: l.subject, value: String(m.value ?? "").trim(), work: m.work, created: m.created || d.date });
+  for (const d of data.days) d.lessons.forEach((l, li) => l.marks.forEach((m, mi) =>
+    out.push({ key: markKeyOf(d.date, li, mi), date: d.date, subject: l.subject, value: String(m.value ?? "").trim(), work: m.work, created: m.created || d.date })));
   return out.sort((a, b) => (b.created > a.created ? 1 : -1));
 }
 function recentMarksCard(limit = 6) {
@@ -684,7 +830,7 @@ function recentMarksCard(limit = 6) {
   const today = parse(todayIso());
   return `<h2>Последние оценки</h2><div class="card">${marks.map((m) => {
     const fresh = (today - parse(m.date)) / 864e5 <= 1;
-    return `<div class="row"><span class="mark ${cls(m.value)}">${esc(m.value)}</span>
+    return `<div class="row tap" role="button" tabindex="0" data-mark="${esc(m.key)}" aria-label="Оценка ${esc(m.value)}, ${esc(m.subject)}: подробности"><span class="mark ${cls(m.value)}">${esc(m.value)}</span>
       <div class="t"><b>${esc(m.subject)}${fresh ? '<span class="new">новая</span>' : ""}</b><span>${dayName(m.date)} · ${esc(m.work || "")}</span></div></div>`;
   }).join("")}</div>`;
 }
@@ -692,13 +838,13 @@ function dayScheduleCard(date, title) {
   const day = data.days.find((d) => d.date === date);
   if (!day) return "";
   const now = new Date(), isToday = date === todayIso(), mins = now.getHours() * 60 + now.getMinutes();
-  return `${title ? `<h2>${title}</h2>` : ""}<div class="card">${day.lessons.map((l) => {
+  return `${title ? `<h2>${title}</h2>` : ""}<div class="card">${day.lessons.map((l, li) => {
     const s = subj(l.subject), on = isToday && !l.canceled && mins >= hhmm(l.start) && mins < hhmm(l.end);
     return `<div class="lesson ${l.canceled ? "off" : ""} ${on ? "now" : ""}" style="${s.style}"><div class="n">${esc(l.n)}</div>
       <div class="ic">${s.icon}</div>
       <div class="t"><b>${esc(l.subject)}${on ? '<span class="now-tag">идёт сейчас</span>' : ""}</b>
         <span>${esc(l.start)}–${esc(l.end)}${teacherShort(l.subject) ? ` · ${esc(teacherShort(l.subject))}` : ""}${l.canceled ? " · отменён" : ""}</span>${l.theme ? `<span class="theme">${esc(l.theme)}</span>` : ""}</div>
-      ${l.marks.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}</div>`;
+      ${l.marks.map((m, mi) => tapMark(day.date, li, mi, m, l.subject)).join("")}</div>`;
   }).join("")}</div>`;
 }
 
@@ -726,7 +872,7 @@ function dayCard(d, done, focusId, paged = false) {
   const dn = list.filter((l) => done[keyOf(l)]).length, total = list.length, rr = rel(d.date);
   const label = rr === "Сегодня" ? "ДЗ на сегодня" : "ДЗ на день";
   const allDone = total > 0 && dn === total;
-  const lessons = d.lessons.map((l) => {
+  const lessons = d.lessons.map((l, li) => {
     const s = subj(l.subject), key = keyOf(l), isDone = !!done[key];
     const strip = hasHw(l) ? `<div class="strip ${isDone ? "done" : ""}" data-key="${esc(key)}">
         <div class="stext">${!noHw(l.homework) ? `<div class="text">${esc(l.homework)}</div>` : ""}${fileChips(l)}</div>
@@ -734,7 +880,7 @@ function dayCard(d, done, focusId, paged = false) {
     return `<div class="lesson2 ${l.canceled ? "off" : ""}" style="${s.style}">
       <div class="lhead" data-toggle><span class="lic">${s.icon}</span>
         <div class="lt"><b>${esc(l.n)}. ${esc(l.subject)}</b><span>${esc(l.start)}–${esc(l.end)}${l.canceled ? " · урок отменён" : ""}</span></div>
-        ${l.marks.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}<span class="chev">›</span></div>
+        ${l.marks.map((m, mi) => tapMark(d.date, li, mi, m, l.subject)).join("")}<span class="chev">›</span></div>
       <div class="ldetails">${teacherShort(l.subject) ? `<div><b>Учитель:</b> ${esc(teacherShort(l.subject))}</div>` : ""}${l.theme ? `<b>Тема урока:</b> ${esc(l.theme)}` : "Тема урока пока не указана"}</div>
       ${strip}</div>`;
   }).join("");
@@ -776,6 +922,45 @@ function viewHw() {
   return [out, recentMarksCard(5)];
 }
 
+// ---------- Карточка оценки: за что поставлена, учитель, тема урока, средний балл по предмету ----------
+let markKey = null;
+const numMarks = (list) => list.map((m) => Number(String(m.value).trim().split("/")[0])).filter((x) => x >= 1 && x <= 5);
+const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+function markDetails(key) {
+  const [date, li, mi] = String(key).split("|");
+  const lesson = data?.days.find((d) => d.date === date)?.lessons[Number(li)], mark = lesson?.marks[Number(mi)];
+  if (!mark) return null;
+  const subject = lesson.subject, mine = String(mark.value ?? "").trim(), when = mark.created || date;
+  const same = allMarks().filter((m) => m.subject === subject);
+  const avg = mean(numMarks(same)), before = mean(numMarks(same.filter((m) => m.created < when)));
+  const y = (data.years || []).find((x) => x.current);                       // средний балл за период берём тот же, что показывает сайт, если он есть
+  const term = y && (y.terms || []).find((t) => t.start && t.finish && date >= t.start && date <= t.finish);
+  const official = String((term?.subjects || []).find((s) => s.name === subject)?.average || "");
+  const value = official || (avg != null ? avg.toFixed(2).replace(".", ",") : "");
+  const mine1 = Number(mine.split("/")[0]);
+  const trend = before != null && mine1 >= 1 && mine1 <= 5 ? (mine1 > before ? "↑" : mine1 < before ? "↓" : "") : "";   // стрелка: оценка подняла или опустила средний балл
+  return { date, subject, mine, work: mark.work || "Оценка", value, num: Number(value.replace(",", ".")), trend, official: !!official,
+    theme: (lesson.theme || "").replace(/\s+/g, " ").trim(), teachers: teachersOf(subject).map((t) => t.name).filter(Boolean) };
+}
+function showMarkModal() {                         // только окно: страница под ним не перерисовывается (раскрытые уроки и прокрутка остаются)
+  $("#modal").innerHTML = confirmModal() || markModal();
+  if (markKey) { const x = document.querySelector("#modal .mm-x"); if (x) x.focus(); }
+}
+function markModal() {
+  const d = markKey && data ? markDetails(markKey) : null;
+  if (!d) return "";
+  const avgCls = d.value && d.num ? cls(Math.round(d.num)) : "";
+  return `<div class="modal-back" data-modal-back><div class="modal markmodal" role="dialog" aria-modal="true" aria-labelledby="mtitle">
+    <div class="mm-head"><div><h3 id="mtitle">${esc(d.subject)}</h3><div class="mm-sub">${esc(d.work)}, ${dayName(d.date)}</div></div>
+      <button class="mm-x" data-mark-close aria-label="Закрыть">✕</button></div>
+    ${d.teachers.length ? `<div class="mm-line"><span class="k">Учитель:</span> ${esc(d.teachers.join(", "))}</div>` : ""}
+    ${d.theme ? `<div class="mm-line"><span class="k">Тема урока:</span><div class="mm-theme">${esc(d.theme)}</div></div>` : ""}
+    <div class="mm-box"><div><b>Оценка</b><span class="mm-big ${cls(d.mine.split("/")[0])}">${esc(d.mine)}</span></div>
+      <div><b>Средний балл</b>${d.value ? `<span class="mm-avg ${avgCls}">${esc(d.value)}${d.trend ? `<span aria-label="${d.trend === "↑" ? "оценка подняла средний балл" : "оценка опустила средний балл"}">${d.trend}</span>` : ""}</span>
+        <div class="mm-note">${d.official ? "по предмету за этот период" : "по всем оценкам по предмету"}</div>` : `<div class="mm-note">пока нет</div>`}</div></div>
+    <div class="mbtns"><button class="safe" data-mark-close>Закрыть</button></div></div></div>`;
+}
+
 // ---------- Оценки ----------
 let marksView = "now", yearIdx = 0, termSel = {};
 const seg = (items, cur, attr, cls2 = "") => `<div class="seg ${cls2}">${items.map(([k, label]) => `<button class="${String(k) === String(cur) ? "on" : ""}" ${attr}="${esc(k)}">${esc(label)}</button>`).join("")}</div>`;
@@ -801,15 +986,40 @@ function lessonRanges(list) {
   for (let i = 0; i < a.length; ) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? `${a[i]}–${a[j]}` : `${a[i]}`); i = j + 1; }
   return out.join(", ");
 }
-function attendanceCard(a, title = "Посещаемость", withDays = true) {
+const daysGen = (n) => (n % 10 === 1 && n % 100 !== 11 ? "дня" : "дней");     // «из 41 дня», «из 42 дней»
+// Сколько учебных дней было в периоде и в скольких из них ученик был в школе. Учебные дни берём из расписания (только для идущего года:
+// за прошлые годы сайт расписание не отдаёт). День считается пропущенным целиком, если пропущены все его уроки; неполные дни считаем отдельно.
+function schoolDayStats(t, y) {
+  if (!y?.current || !t?.attendance) return null;
+  const range = termRange(t);
+  if (!range) return null;
+  const today = todayIso(), last = range[1] < today ? range[1] : today, gone = {};
+  for (const e of t.attendance.days || []) {
+    if (e.kind === "late") continue;
+    const set = (gone[e.date] ??= new Set());
+    const nums = (e.lessons || []).length ? e.lessons : (e.items || []).map((i) => i.n);
+    if (nums.length) nums.forEach((n) => set.add(Number(n))); else set.add("all");
+  }
+  let total = 0, full = 0, partial = 0;
+  for (const [date, lessons] of schoolDayMap()) {
+    if (date < range[0] || date > last) continue;
+    total++;
+    const set = gone[date];
+    if (!set) continue;
+    if (set.has("all") || lessons.every((l) => set.has(Number(l.n)))) full++; else partial++;
+  }
+  return total ? { total, attended: total - full, partial } : null;
+}
+const schoolDaysLine = (s) => (s ? `<br>Дней в школе: ${s.attended} из ${s.total}&nbsp;${daysGen(s.total)}${s.partial ? ` <span class="att-sub">(из них неполных: ${s.partial})</span>` : ""}` : "");
+function attendanceCard(a, title = "Посещаемость", withDays = true, stats = null) {
   if (!a) return "";
   const absent = Number(a.absent) || 0, ill = Number(a.ill) || 0, late = Number(a.late) || 0, other = absent - ill;
   const parts = [];
   if (ill) parts.push(`${lessonsWord(ill)} по болезни`);
   if (other > 0) parts.push(`${lessonsWord(other)} по другим причинам`);
   const text = !absent && !late
-    ? `<b>🎉 Пропусков и опозданий нет</b><br>Всего уроков: ${Number(a.total) || 0}`
-    : `<b>Пропущено ${lessonsAndDays(absent, missedDays(a.days))}</b>${parts.length ? `<br>${parts.join(", ")}` : ""}${late ? `<br>Опозданий: ${late}` : ""}<br>Всего уроков: ${Number(a.total) || 0}`;
+    ? `<b>🎉 Пропусков и опозданий нет</b><br>Всего уроков: ${Number(a.total) || 0}${schoolDaysLine(stats)}`
+    : `<b>Пропущено ${lessonsAndDays(absent, missedDays(a.days))}</b>${parts.length ? `<br>${parts.join(", ")}` : ""}${late ? `<br>Опозданий: ${late}` : ""}<br>Всего уроков: ${Number(a.total) || 0}${schoolDaysLine(stats)}`;
   const days = withDays && (a.days || []).length ? `<details><summary>Показать дни (${a.days.length})</summary>${a.days.map((d) => {
     const dt = parse(d.date);
     return `<div class="att-day"><span>${ATT_ICON[d.kind] || "•"}</span><b>${dt.getDate()} ${MONTHS[dt.getMonth()]}, ${WDAY[dt.getDay()]}</b>
@@ -823,15 +1033,17 @@ function attendanceYear(y) {
   const total = rows.reduce((s, t) => s + (Number(t.attendance.total) || 0), 0), absent = rows.reduce((s, t) => s + (Number(t.attendance.absent) || 0), 0);
   const pct = total ? Math.round((100 * (total - absent)) / total) : 100;
   const lab = y.periodLabel === "тр" ? "тр" : "пер.";
+  const all = rows.map((t) => schoolDayStats(t, y)).filter(Boolean);
+  const yearStats = all.length ? { total: all.reduce((s, x) => s + x.total, 0), attended: all.reduce((s, x) => s + x.attended, 0), partial: all.reduce((s, x) => s + x.partial, 0) } : null;
   return `<div class="card att ${absent ? "warn" : ""}" style="margin-top:12px"><div class="att-title">Посещаемость за год</div>
     <div class="att-head"><div class="att-pct"><strong>${pct}%</strong><span>на уроках</span></div>
-    <div class="att-text"><b>${absent ? `Пропущено ${lessonsAndDays(absent, missedDays(rows.flatMap((t) => t.attendance.days || [])))}` : "🎉 Пропусков нет"}</b><br>Всего уроков: ${total}</div></div>
+    <div class="att-text"><b>${absent ? `Пропущено ${lessonsAndDays(absent, missedDays(rows.flatMap((t) => t.attendance.days || [])))}` : "🎉 Пропусков нет"}</b><br>Всего уроков: ${total}${schoolDaysLine(yearStats)}</div></div>
     <div class="att-terms">${rows.map((t) => `<div><span>${esc(t.number)} ${lab}</span><span>${t.attendance.absent ? `пропущено ${lessonsAndDays(Number(t.attendance.absent) || 0, missedDays(t.attendance.days))}` : "без пропусков"} · ${Number(t.attendance.percent) || 0}%</span></div>`).join("")}</div></div>`;
 }
 function currentAttendanceCard() {
   const y = (data.years || []).find((x) => x.current);
   const t = y && [...(y.terms || [])].reverse().find((x) => x.attendance);
-  return t ? attendanceCard(t.attendance, `Посещаемость (${t.number} ${y.periodLabel === "тр" ? "тр" : "пер."})`) : "";
+  return t ? attendanceCard(t.attendance, `Посещаемость (${t.number} ${y.periodLabel === "тр" ? "тр" : "пер."})`, true, schoolDayStats(t, y)) : "";
 }
 
 // ---------- Экран «Посещаемость»: календарь по дням ----------
@@ -929,7 +1141,7 @@ function viewAttendance() {
   attTerm[y.label] = sel;
   const t = terms.find((x) => String(x.number) === sel), lab = y.periodLabel === "тр" ? "тр" : "пер.";
   out += seg(terms.map((x) => [String(x.number), `${x.number} ${lab}`]), sel, "data-aterm", "small");
-  out += `<div style="margin-top:12px">${attendanceCard(t.attendance, "Посещаемость", false)}</div>`;
+  out += `<div style="margin-top:12px">${attendanceCard(t.attendance, "Посещаемость", false, schoolDayStats(t, y))}</div>`;
   out += `<div class="legend"><span><i class="l-ok"></i>был на уроках</span><span><i class="l-ill"></i>болезнь</span>
     <span><i class="l-absent"></i>пропуск</span><span><i class="l-late"></i>опоздание</span><span><i class="l-none"></i>нет уроков</span></div>`;
   out += calendarHtml(t, y) + dayInfoHtml(t, y) + attDaysList(t);
@@ -961,8 +1173,8 @@ function viewYears() {
     return out + `<div class="term-sub" style="margin-top:10px">«–» — оценка за период ещё не выставлена.</div>` + attendanceYear(y);
   }
   const t = y.terms.find((x) => String(x.number) === sel);
-  if (t && t.attendance) out += `<div style="margin-top:12px">${attendanceCard(t.attendance)}</div>`;
-  if (!t || !t.subjects.length) return out + `<div class="empty"><span class="em">🌱</span>В этом периоде оценок пока нет.</div>`;
+  const att = t && t.attendance ? `<div style="margin-top:12px">${attendanceCard(t.attendance, "Посещаемость", true, schoolDayStats(t, y))}</div>` : "";   // внизу экрана
+  if (!t || !t.subjects.length) return out + `<div class="empty"><span class="em">🌱</span>В этом периоде оценок пока нет.</div>` + att;
   out += `<div class="cards2" style="margin-top:12px">`;
   for (const sb of t.subjects) {
     const s = subj(sb.name);
@@ -970,7 +1182,7 @@ function viewYears() {
       ${sb.average ? `<div class="avg">средний<strong>${esc(sb.average)}</strong></div>` : ""}</div>
       <div class="chips">${sb.marks.map((m) => markChip(m)).join("")}</div></div>`;
   }
-  return out + `</div>`;
+  return out + `</div>` + att;
 }
 
 function viewMarks() {
@@ -980,7 +1192,7 @@ function viewMarks() {
   if (hasYears && marksView === "att") return [tabs + viewAttendance(), ""];
   const marks = allMarks();
   if (!marks.length) return [tabs + `<div class="empty"><span class="em">⭐</span>Оценок пока нет.</div>`, ""];
-  let out = tabs + currentAttendanceCard() + recentMarksCard(8);
+  let out = tabs + recentMarksCard(8);
 
   const by = {};
   for (const m of marks) (by[m.subject] ??= []).push(m);
@@ -991,9 +1203,10 @@ function viewMarks() {
     const avg = n.length ? (n.reduce((a, b) => a + b, 0) / n.length).toFixed(2).replace(".", ",") : "";
     out += `<div class="card" style="${s.style}"><div class="subjhead"><div class="ic">${s.icon}</div><b>${esc(name)}</b>
       ${avg ? `<div class="avg">средний<strong>${avg}</strong></div>` : ""}</div>
-      <div class="chips">${list.map((m) => `<span class="mark sm ${cls(m.value)}">${esc(m.value)}</span>`).join("")}</div></div>`;
+      <div class="chips">${list.map((m) => `<span class="mark sm tap ${cls(m.value)}" role="button" tabindex="0" data-mark="${esc(m.key)}" aria-label="Оценка ${esc(m.value)}, ${esc(name)}: подробности">${esc(m.value)}</span>`).join("")}</div></div>`;
   }
   out += `</div>`;
+  out += currentAttendanceCard() ? `<div style="margin-top:12px">${currentAttendanceCard()}</div>` : "";     // посещаемость внизу экрана
   return [out, ""];
 }
 
@@ -1052,9 +1265,22 @@ document.addEventListener("touchend", (e) => {
 // ---------- События ----------
 document.addEventListener("submit", (e) => {
   if (e.target.id === "setup-form") { e.preventDefault(); submitSetup(e.target); }
+  if (e.target.id === "lock-form") { e.preventDefault(); submitLock(e.target); }
+  if (e.target.id === "pass-form") { e.preventDefault(); submitPass(e.target); }
 });
 
 document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-mark-close]")) { markKey = null; showMarkModal(); return; }
+  const mk = e.target.closest("[data-mark]");
+  if (mk) { markKey = mk.dataset.mark; showMarkModal(); return; }
+  const pa = e.target.closest("[data-pass]");
+  if (pa) {
+    const v = pa.dataset.pass;
+    if (v === "logout") { passLogout(); return; }
+    passForm = v === "cancel" ? null : v; passMsg = null; render();
+    const first = document.querySelector("#pass-form input"); if (first) first.focus();
+    return;
+  }
   if (e.target.closest("[data-settings-close]")) { showSettings = false; render(); window.scrollTo(0, 0); return; }
   const st = e.target.closest("[data-set]");
   if (st) {
@@ -1080,7 +1306,7 @@ document.addEventListener("click", (e) => {
     if (confirmStep === 1) startLogout(); else finishLogout();
     return;
   }
-  if (e.target.matches("[data-modal-back]")) { if (!confirmBusy) closeConfirm(); return; }
+  if (e.target.matches("[data-modal-back]")) { if (markKey) { markKey = null; showMarkModal(); return; } if (!confirmBusy) closeConfirm(); return; }
   if (e.target.closest("[data-setup-cancel]")) { showSetup = false; setupMsg = null; render(); return; }
   if (e.target.closest("[data-restore]")) { restoreLogin(); return; }
   if (e.target.closest("[data-setup]")) { showSetup = !showSetup; setupMsg = null; render(); window.scrollTo(0, 0); return; }
@@ -1113,7 +1339,7 @@ document.addEventListener("click", (e) => {
   if (nav) shiftPage(Number(nav.dataset.nav));
 });
 
-$("#gear").addEventListener("click", () => { showSettings = !showSettings; askClearDone = false; render(); window.scrollTo(0, 0); });
+$("#gear").addEventListener("click", () => { showSettings = !showSettings; askClearDone = false; passForm = null; passMsg = null; render(); window.scrollTo(0, 0); });
 
 $("#refresh").addEventListener("click", async () => {
   const b = $("#refresh"); b.disabled = true; $("#ricon").className = "spin";
@@ -1121,7 +1347,7 @@ $("#refresh").addEventListener("click", async () => {
   setTimeout(async () => { await load(); b.disabled = false; $("#ricon").className = ""; }, 15000);
 });
 
-document.addEventListener("visibilitychange", () => { if (!document.hidden && !window.__DATA__) load(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !window.__DATA__ && !locked) load(); });
 load();
 </script>
 </body>

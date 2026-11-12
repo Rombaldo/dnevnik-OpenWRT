@@ -26,7 +26,7 @@ class SetupCgiTests(unittest.TestCase):
                "DNEVNIK_HOME": self.tmp.name, "DNEVNIK_GAP_FILE": self.gap, "PYTHONPATH": str(ROOT)}
         r = subprocess.run([sys.executable, str(CGI)], input=data, capture_output=True, env=env, timeout=30)
         head, _, payload = r.stdout.decode("utf-8").partition("\r\n\r\n")
-        status = int(head.split("Status: ")[1].split("\r\n")[0])
+        status = int(head.split("Status: ")[1].split()[0])
         return status, json.loads(payload), head, r.stderr.decode()
 
     def test_get_is_refused(self):
@@ -86,7 +86,7 @@ class LogoutCgiTests(unittest.TestCase):
                "DNEVNIK_OUT": str(self.out), "DNEVNIK_LOGOUT_GAP": str(self.gap), "PYTHONPATH": str(ROOT)}
         r = subprocess.run([sys.executable, str(LOGOUT_CGI)], input=data, capture_output=True, env=env, timeout=30)
         head, _, payload = r.stdout.decode("utf-8").partition("\r\n\r\n")
-        return int(head.split("Status: ")[1].split("\r\n")[0]), json.loads(payload)
+        return int(head.split("Status: ")[1].split()[0]), json.loads(payload)
 
     def age_pending(self, seconds):
         f = self.home / "data" / "logout-pending.json"

@@ -13,12 +13,13 @@ from datetime import datetime, timedelta
 
 HOME = os.environ.get("DNEVNIK_HOME", "/root/dnevnik")           # другие значения нужны только тестам
 WWW = os.environ.get("DNEVNIK_WWW", "/tmp/dnevnik-www")
+PRIV = os.environ.get("DNEVNIK_PRIV", "/tmp/dnevnik-private")     # данные дневника лежат вне папки веб-сервера
 TMPD = os.environ.get("DNEVNIK_TMP", "/tmp")
 CRON = os.environ.get("DNEVNIK_CRON", "/etc/crontabs/root")
 REPO = "Rombaldo/dnevnik-OpenWRT"
 VERSION_URL = os.environ.get("DNEVNIK_VERSION_URL", f"https://raw.githubusercontent.com/{REPO}/main/VERSION")
 DATA = os.path.join(HOME, "data")
-OUT = os.path.join(WWW, "data.json")
+OUT = os.path.join(PRIV, "data.json")
 SYNC_LOG, UPDATE_LOG = os.path.join(TMPD, "dnevnik-sync.log"), os.path.join(TMPD, "dnevnik-update.log")
 SYNC_LOCK, UPDATE_PID = os.path.join(TMPD, "dnevnik-sync.lock"), os.path.join(TMPD, "dnevnik-update.pid")
 LAST_REFRESH = os.path.join(TMPD, "dnevnik-lastrefresh")
@@ -123,7 +124,13 @@ def status(_):
         name = (json.loads(read_text(os.path.join(HOME, "config.json")) or "{}").get("name") or "")
     except ValueError:
         name = ""
+    try:
+        import auth
+        family, family_hint, family_changed = auth.enabled(DATA), auth.get_hint(DATA), auth.changed_at(DATA)
+    except Exception:
+        family, family_hint, family_changed = False, "", 0
     return {
+        "family": family, "familyHint": family_hint, "familyChanged": family_changed,
         "version": read_text(os.path.join(HOME, "VERSION")).strip(),
         "updatedAt": page.get("updatedAt"), "days": len(page.get("days") or []),
         "needLogin": bool(st.get("needLogin")), "error": st.get("error"),
@@ -254,10 +261,29 @@ def logout_restore(_):
     return {"ok": ok, "message": message}
 
 
+def family_set(args):
+    """Задаёт или меняет пароль семьи и подсказку. Старый пароль не нужен: в LuCI может войти только хозяин роутера.
+    Все устройства семьи после этого входят заново (так же сбрасывается забытый пароль)."""
+    import auth
+    ok, message = auth.set_password(DATA, str(args.get("password") or ""), str(args.get("hint") or ""))
+    if ok:
+        auth.throttle_reset(os.environ.get("DNEVNIK_AUTH_THROTTLE", os.path.join(TMPD, "dnevnik-auth-throttle")))
+        message = "Пароль сохранён. Устройства семьи введут его заново."
+    return {"ok": ok, "message": message}
+
+
+def family_off(_):
+    import auth
+    auth.disable(DATA)
+    auth.throttle_reset(os.environ.get("DNEVNIK_AUTH_THROTTLE", os.path.join(TMPD, "dnevnik-auth-throttle")))
+    return {"ok": True, "message": "Пароль отключён: страницу открывает любой, кто до неё доберётся."}
+
+
 METHODS = {
     "status": (status, {}), "log": (log, {"which": ""}), "refresh": (refresh, {}), "check_update": (check_update, {}),
     "update": (update, {}), "set_config": (set_config, {"every": 0, "from": 0, "to": 0, "name": ""}),
     "logout_begin": (logout_begin, {}), "logout_confirm": (logout_confirm, {"token": ""}), "logout_restore": (logout_restore, {}),
+    "family_set": (family_set, {"password": "", "hint": ""}), "family_off": (family_off, {}),
 }
 
 

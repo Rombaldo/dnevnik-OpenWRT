@@ -9,9 +9,10 @@ import sys
 import time
 
 HOME_DIR = os.environ.get("DNEVNIK_HOME", "/root/dnevnik")      # другое значение нужно только тестам
-OUT_FILE = os.environ.get("DNEVNIK_OUT", "/tmp/dnevnik-www/data.json")
+OUT_FILE = os.environ.get("DNEVNIK_OUT", "/tmp/dnevnik-private/data.json")
 GAP_FILE = os.environ.get("DNEVNIK_LOGOUT_GAP", "/tmp/dnevnik-logout-last")
 sys.path.insert(0, HOME_DIR)
+import auth  # noqa: E402
 import core  # noqa: E402
 
 DATA = os.path.join(HOME_DIR, "data")
@@ -19,13 +20,15 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 
 def reply(obj, code=200):
-    sys.stdout.write("Status: %d\r\nContent-Type: application/json; charset=utf-8\r\nCache-Control: no-cache\r\n\r\n" % code)
+    sys.stdout.write(auth.status_line(code) + "\r\nContent-Type: application/json; charset=utf-8\r\nCache-Control: no-cache\r\n\r\n")
     sys.stdout.write(json.dumps(obj, ensure_ascii=False))
     sys.exit(0)
 
 
 if os.environ.get("REQUEST_METHOD") != "POST":
     reply({"ok": False, "message": "Нужен запрос POST."}, 405)
+if not auth.authed(DATA, os.environ.get("HTTP_COOKIE")):      # включён семейный пароль, а запрос пришёл без него
+    reply(auth.locked_reply()[1], 401)
 try:
     size = int(os.environ.get("CONTENT_LENGTH") or 0)
     if not 0 < size <= 1024:

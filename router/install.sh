@@ -86,7 +86,7 @@ fi
 tar tzf "$TMP/src.tar.gz" >/dev/null 2>&1 || die "архив повреждён"
 mkdir -p "$TMP/x" && tar xzf "$TMP/src.tar.gz" -C "$TMP/x"
 SRC=$(find "$TMP/x" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-for f in core.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/setname.sh; do
+for f in core.py auth.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/auth.cgi router/data.cgi router/password.py router/setname.sh; do
     [ -f "$SRC/$f" ] || die "в архиве нет файла $f"
 done
 if [ "$LUCI" = "1" ]; then
@@ -102,9 +102,9 @@ mkdir -p "$APP/data"; chmod 700 "$APP/data"
 rm -rf "$APP/web" "$APP/router" "$APP/luci"
 cp -r "$SRC/web" "$SRC/router" "$APP/"
 [ -d "$SRC/luci" ] && cp -r "$SRC/luci" "$APP/"
-cp -f "$SRC/core.py" "$SRC/sync.py" "$SRC/VERSION" "$APP/"
+cp -f "$SRC/core.py" "$SRC/auth.py" "$SRC/sync.py" "$SRC/VERSION" "$APP/"
 [ -f "$APP/config.json" ] || cp "$SRC/config.example.json" "$APP/config.json"
-chmod 755 "$APP"/router/*.sh "$APP"/router/*.cgi "$APP"/router/dnevnik.init
+chmod 755 "$APP"/router/*.sh "$APP"/router/*.cgi "$APP"/router/*.py "$APP"/router/dnevnik.init
 [ -f "$APP/luci/rpcd/luci.dnevnik" ] && chmod 755 "$APP/luci/rpcd/luci.dnevnik"
 rm -f "$APP/.source"   # старые версии установщика запоминали имя репозитория
 chown -R root:root "$APP"
@@ -147,6 +147,11 @@ done
 
 say "Готово: версия $NEW."
 [ -n "$LUCI_MSG" ] && echo "$LUCI_MSG"
+if [ -f "$APP/data/auth.json" ]; then
+    echo "    Пароль семьи включён: без него страница не откроется. Забыли пароль: задайте новый в LuCI (Службы → Дневник) или: python3 $APP/router/password.py set 'новый пароль'"
+else
+    echo "    Пароль семьи не задан: страницу видит любой, у кого есть к ней доступ. Задайте его в «Настройки» → «Пароль для семьи» (обязательно, если открываете страницу вне дома)."
+fi
 if [ ! -s "$APP/data/credentials.json" ] && [ ! -s "$APP/data/session.json" ]; then
     echo "    Осталось один раз ввести логин и пароль от Дневник.ру: откройте страницу ниже на телефоне и заполните форму."
 fi

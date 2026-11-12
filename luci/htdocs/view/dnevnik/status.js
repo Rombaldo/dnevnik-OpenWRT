@@ -15,7 +15,9 @@ var call = {
 	set_config: rpc.declare({ object: 'luci.dnevnik', method: 'set_config', params: [ 'every', 'from', 'to', 'name' ] }),
 	logout_begin: rpc.declare({ object: 'luci.dnevnik', method: 'logout_begin' }),
 	logout_confirm: rpc.declare({ object: 'luci.dnevnik', method: 'logout_confirm', params: [ 'token' ] }),
-	logout_restore: rpc.declare({ object: 'luci.dnevnik', method: 'logout_restore' })
+	logout_restore: rpc.declare({ object: 'luci.dnevnik', method: 'logout_restore' }),
+	family_set: rpc.declare({ object: 'luci.dnevnik', method: 'family_set', params: [ 'password', 'hint' ] }),
+	family_off: rpc.declare({ object: 'luci.dnevnik', method: 'family_off' })
 };
 
 var STYLE =
@@ -33,6 +35,9 @@ var STYLE =
 	'.dn-form{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr);gap:10px 12px;align-items:center;font-size:14px}' +
 	'.dn-form select,.dn-form input{max-width:240px;min-width:0}' +
 	'@media(max-width:600px){.dn-form{grid-template-columns:minmax(0,1fr)}.dn-form select,.dn-form input{max-width:none;width:100%}.dn-head{flex-wrap:wrap}}' +
+	'.dn-pform{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr);gap:10px 12px;align-items:center;font-size:14px;margin-top:12px}' +
+	'.dn-pform input{max-width:320px;min-width:0}' +
+	'@media(max-width:600px){.dn-pform{grid-template-columns:minmax(0,1fr)}.dn-pform input{max-width:none;width:100%}}' +
 	'.dn-hint{color:var(--dn-muted);font-size:12px;margin:8px 0 0}' +
 	'.dn-log{max-height:260px;overflow:auto;font:12px monospace;white-space:pre-wrap;background:var(--dn-soft);padding:8px;border-radius:8px;margin:8px 0 0}';
 
@@ -94,6 +99,14 @@ return view.extend({
 		r.refresh.disabled = !!st.syncing || !!st.updating;
 		r.restore.style.display = st.canRestore ? '' : 'none';
 		r.logout.disabled = !!st.needLogin;
+		r.fpill.className = 'dn-pill ' + (st.family ? 'ok' : 'warn');
+		r.fpill.textContent = st.family ? 'Пароль включён' : 'Пароль не задан';
+		r.fstate.textContent = st.family
+			? 'Дневник закрыт паролем' + (st.familyChanged ? ' (задан ' + whenText(new Date(st.familyChanged * 1000).toISOString()) + ')' : '') + '.'
+			: 'Сейчас дневник открыт всем, кто до него доберётся. Если страницу можно открыть из интернета, обязательно задайте пароль.';
+		r.fset.textContent = st.family ? 'Сменить пароль' : 'Задать пароль';
+		r.foff.style.display = st.family ? '' : 'none';
+		if (!this.hintFilled) { r.fhint.value = st.familyHint || ''; this.hintFilled = true; }       // подсказку подставляем один раз, чтобы не стирать то, что вы печатаете
 	},
 
 	poll: function() {
@@ -190,6 +203,34 @@ return view.extend({
 		]);
 	},
 
+	doFamilySet: function() {
+		var self = this, r = this.refs, pw = r.fpw.value, again = r.fpw2.value;
+		if (!pw.trim()) return self.say(r.fnote, 'bad', 'Введите пароль.');
+		if (pw !== again) return self.say(r.fnote, 'bad', 'Пароли не совпадают.');
+		return call.family_set(pw, r.fhint.value).then(function(res) {
+			self.say(r.fnote, res.ok ? 'ok' : 'bad', res.message);
+			if (res.ok) { r.fpw.value = ''; r.fpw2.value = ''; }
+			return self.poll();
+		});
+	},
+
+	doFamilyOff: function() {
+		var self = this;
+		ui.showModal('Отключить пароль?', [
+			E('p', 'Дневник станет открыт всем, кто увидит страницу. Если она доступна из интернета, отключать пароль не стоит.'),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'cbi-button', click: ui.hideModal }, 'Отмена'), ' ',
+				E('button', { 'class': 'cbi-button cbi-button-negative', click: function() {
+					ui.hideModal();
+					return call.family_off().then(function(res) {
+						self.say(self.refs.fnote, res.ok ? 'ok' : 'bad', res.message);
+						return self.poll();
+					});
+				} }, 'Отключить пароль')
+			])
+		]);
+	},
+
 	doRestore: function() {
 		var self = this;
 		return call.logout_restore().then(function(r) {
@@ -215,6 +256,14 @@ return view.extend({
 		r.logout = E('button', { 'class': 'cbi-button cbi-button-negative', click: function() { return self.doLogout(); } }, 'Выйти из аккаунта');
 		r.restore = E('button', { 'class': 'cbi-button', style: 'display:none', click: function() { return self.doRestore(); } }, 'Вернуть прежний вход');
 		r.open = E('a', { 'class': 'cbi-button cbi-button-action', href: st.url, target: '_blank', rel: 'noopener' }, 'Открыть дневник');
+		r.fpill = E('span', { 'class': 'dn-pill' }, '…');
+		r.fstate = E('p', { 'class': 'dn-v' }, '');
+		r.fnote = E('div', { 'class': 'dn-note', style: 'display:none' });
+		r.fpw = E('input', { 'class': 'cbi-input-password', type: 'password', autocomplete: 'new-password', maxlength: 128 });
+		r.fpw2 = E('input', { 'class': 'cbi-input-password', type: 'password', autocomplete: 'new-password', maxlength: 128 });
+		r.fhint = E('input', { 'class': 'cbi-input-text', type: 'text', maxlength: 100, placeholder: 'например: имя собаки и год' });
+		r.fset = E('button', { 'class': 'cbi-button cbi-button-action', click: function() { return self.doFamilySet(); } }, 'Задать пароль');
+		r.foff = E('button', { 'class': 'cbi-button cbi-button-negative', style: 'display:none', click: function() { return self.doFamilyOff(); } }, 'Отключить пароль');
 
 		var linkBox = E('p', { 'class': 'dn-v' }, [ r.link, E('br'), r.link2 ]);
 
@@ -240,6 +289,19 @@ return view.extend({
 				]),
 				E('div', { 'class': 'dn-btns' }, [ r.open, r.refresh, r.check, r.updbtn, r.logout, r.restore ]),
 				r.note, r.updnote
+			]),
+			E('div', { 'class': 'dn-card' }, [
+				E('div', { 'class': 'dn-head' }, [ E('p', { 'class': 'dn-title' }, 'Пароль семьи'), r.fpill ]),
+				r.fstate,
+				E('p', { 'class': 'dn-hint' }, 'Один общий пароль на всю семью. Каждое устройство вводит его один раз и запоминает на полгода. Старый пароль знать не нужно: забыли — просто задайте новый здесь, и все устройства войдут заново.'),
+				E('div', { 'class': 'dn-pform' }, [
+					E('label', {}, 'Новый пароль'), r.fpw,
+					E('label', {}, 'Повторите пароль'), r.fpw2,
+					E('label', {}, 'Подсказка (по желанию)'), r.fhint
+				]),
+				E('p', { 'class': 'dn-hint' }, 'Пароль может быть любым, даже из одного символа, но короткий легко подобрать, особенно если дневник открыт из интернета: лучше фраза из нескольких слов. Подсказку видит каждый на экране входа, поэтому сам пароль в ней писать нельзя.'),
+				E('div', { 'class': 'dn-btns' }, [ r.fset, r.foff ]),
+				r.fnote
 			]),
 			E('div', { 'class': 'dn-card' }, [
 				E('div', { 'class': 'dn-head' }, [ E('p', { 'class': 'dn-title' }, 'Настройки') ]),

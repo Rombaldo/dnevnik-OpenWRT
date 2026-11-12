@@ -53,7 +53,7 @@ class PluginCase(unittest.TestCase):
         sync.chmod(0o755)
         install = self.home / "router" / "install.sh"
         install.write_text(f"#!/bin/sh\necho \"args: $@\" > {self.tmp}/install-args\nsleep 3\n")
-        self.env = dict(os.environ, DNEVNIK_HOME=str(self.home), DNEVNIK_WWW=str(self.www), DNEVNIK_TMP=str(self.run_dir),
+        self.env = dict(os.environ, DNEVNIK_HOME=str(self.home), DNEVNIK_WWW=str(self.www), DNEVNIK_PRIV=str(self.www), DNEVNIK_TMP=str(self.run_dir),
                         DNEVNIK_CRON=str(self.cron), DNEVNIK_NO_SERVICES="1", DNEVNIK_DOMAIN="lan",
                         DNEVNIK_VERSION_URL=(self.tmp / "remote-version").as_uri())
         (self.tmp / "remote-version").write_text("0.12.0\n")
@@ -79,6 +79,45 @@ class PluginTests(PluginCase):
         for m in methods:
             self.assertIn(f"method: '{m}'", js, m)                                   # страница вызывает только существующие методы
         self.assertEqual(set(acl["read"]["ubus"]["luci.dnevnik"]), {"status", "log", "check_update"})   # чтение только безвредное
+
+    def test_family_password_methods(self):
+        import auth
+        data = self.home / "data"
+        shutil.copy(ROOT / "auth.py", self.home / "auth.py")
+        s = self.call("status")
+        self.assertEqual((s["family"], s["familyHint"], s["familyChanged"]), (False, "", 0))
+        for bad in ({"password": "   "}, {"password": "семейный-пароль-123", "hint": "тут семейный-пароль-123"}, {}):
+            r = self.call("family_set", bad)
+            self.assertFalse(r["ok"], bad)
+            self.assertFalse(auth.enabled(data))
+        r = self.call("family_set", {"password": "семейный-пароль-123", "hint": "имя кота"})
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(auth.check_password(data, "семейный-пароль-123"))
+        s = self.call("status")
+        self.assertEqual((s["family"], s["familyHint"]), (True, "имя кота"))
+        self.assertGreater(s["familyChanged"], 0)
+        self.assertNotIn("семейный-пароль-123", json.dumps(s, ensure_ascii=False) + json.dumps(r, ensure_ascii=False))
+        cookie = "dnevnik_auth=" + auth.make_token(data)
+        self.assertTrue(auth.authed(data, cookie))
+        (self.run_dir / "dnevnik-auth-throttle").write_text(json.dumps({"fails": 9, "until": time.time() + 900}))
+        r = self.call("family_set", {"password": "новый-пароль-4567", "hint": ""})              # забытый пароль: задаём новый, старый не нужен
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(auth.authed(data, cookie))                                          # все устройства вышли
+        self.assertEqual(auth.throttle_wait(self.run_dir / "dnevnik-auth-throttle"), 0)       # и блокировка перебора снята
+        self.assertEqual(self.call("status")["familyHint"], "")
+        self.assertTrue(self.call("family_off")["ok"])
+        self.assertFalse(auth.enabled(data))
+        self.assertTrue(self.call("family_off")["ok"])                                       # повторно безвредно
+
+    def test_family_password_file_is_private(self):
+        shutil.copy(ROOT / "auth.py", self.home / "auth.py")
+        self.call("family_set", {"password": "семейный-пароль-123"})
+        self.assertEqual(oct((self.home / "data" / "auth.json").stat().st_mode & 0o777), "0o600")
+
+    def test_password_methods_are_write_only(self):
+        acl = json.loads(ACL.read_text())["luci-app-dnevnik"]
+        self.assertTrue({"family_set", "family_off"} <= set(acl["write"]["ubus"]["luci.dnevnik"]))
+        self.assertFalse({"family_set", "family_off"} & set(acl["read"]["ubus"]["luci.dnevnik"]))
 
     def test_menu_points_to_the_page_file(self):
         menu = json.loads(MENU.read_text())["admin/services/dnevnik"]
@@ -436,6 +475,77 @@ class ViewTests(unittest.TestCase):
         page = self.open(answers={"check_update": {"ok": False, "message": "Нет связи с GitHub."}})
         page.click("text=Проверить новую версию")
         page.wait_for_selector("text=Нет связи с GitHub.")
+
+    def pform(self, page):
+        return page.query_selector_all(".dn-pform input")
+
+    def test_family_card_when_password_is_off(self):
+        page = self.open()
+        self.assertIn("Пароль не задан", page.inner_text(".dn-pill >> nth=1"))
+        self.assertIn("открыт всем", page.inner_text(".dn"))
+        self.assertEqual(page.inner_text("button:has-text('пароль') >> nth=0"), "Задать пароль")
+        self.assertFalse(page.is_visible("button:has-text('Отключить пароль')"))
+        self.assertEqual(len(self.pform(page)), 3)
+        self.assertEqual(self.pform(page)[0].get_attribute("type"), "password")                  # пароль не показывается на экране
+        self.assertEqual(self.errors, [])
+
+    def test_family_card_when_password_is_on(self):
+        page = self.open({"family": True, "familyHint": "имя кота", "familyChanged": 1762900000})
+        self.assertIn("Пароль включён", page.inner_text(".dn"))
+        self.assertTrue(page.is_visible("button:has-text('Сменить пароль')"))
+        self.assertTrue(page.is_visible("button:has-text('Отключить пароль')"))
+        self.assertEqual(page.input_value(".dn-pform input[type=text]"), "имя кота")             # текущая подсказка подставлена
+
+    def test_family_set_sends_password_and_hint(self):
+        page = self.open()
+        page.fill(".dn-pform input >> nth=0", "семейный-пароль-123")
+        page.fill(".dn-pform input >> nth=1", "семейный-пароль-123")
+        page.fill(".dn-pform input >> nth=2", "имя кота")
+        page.click("button:has-text('Задать пароль')")
+        page.wait_for_function("window.calls.some(c => c[0] === 'family_set')")
+        self.assertEqual(page.evaluate("window.calls.find(c => c[0] === 'family_set')[1]"), ["семейный-пароль-123", "имя кота"])
+        page.wait_for_selector(".dn-note.ok")
+        self.assertEqual(page.input_value(".dn-pform input >> nth=0"), "")                         # пароль с экрана стёрт
+        self.assertEqual(page.input_value(".dn-pform input >> nth=1"), "")
+        self.assertNotIn("семейный-пароль-123", page.content())
+        self.assertEqual(self.errors, [])
+
+    def test_family_set_checks_before_calling(self):
+        page = self.open()
+        page.click("button:has-text('Задать пароль')")                                            # пустой пароль
+        page.wait_for_selector(".dn-note.bad:has-text('Введите пароль')")
+        page.fill(".dn-pform input >> nth=0", "семейный-пароль-123")
+        page.fill(".dn-pform input >> nth=1", "другой-пароль-12345")
+        page.click("button:has-text('Задать пароль')")
+        page.wait_for_selector(".dn-note.bad:has-text('не совпадают')")
+        self.assertNotIn("family_set", self.names(page))                                          # на сервер ничего не ушло
+
+    def test_family_set_accepts_a_one_character_password(self):
+        page = self.open()
+        self.assertIn("даже из одного символа", page.inner_text(".dn"))
+        page.fill(".dn-pform input >> nth=0", "я")
+        page.fill(".dn-pform input >> nth=1", "я")
+        page.click("button:has-text('Задать пароль')")
+        page.wait_for_function("window.calls.some(c => c[0] === 'family_set')")
+        self.assertEqual(page.evaluate("window.calls.find(c => c[0] === 'family_set')[1]"), ["я", ""])
+
+    def test_family_set_error_from_server_is_shown(self):
+        page = self.open(answers={"family_set": {"ok": False, "message": "Подсказка не должна содержать сам пароль."}})
+        page.fill(".dn-pform input >> nth=0", "семейный-пароль-123")
+        page.fill(".dn-pform input >> nth=1", "семейный-пароль-123")
+        page.click("button:has-text('Задать пароль')")
+        page.wait_for_selector(".dn-note.bad:has-text('не должна содержать')")
+
+    def test_family_off_needs_confirmation(self):
+        page = self.open({"family": True})
+        page.click("button:has-text('Отключить пароль')")
+        self.assertIn("Отключить пароль?", page.inner_text("#modal h4"))
+        self.assertNotIn("family_off", self.names(page))                                          # от одного нажатия ничего не происходит
+        page.click("#modal >> text=Отмена")
+        self.assertNotIn("family_off", self.names(page))
+        page.click("button:has-text('Отключить пароль')")
+        page.click("#modal button.cbi-button-negative")
+        page.wait_for_function("window.calls.some(c => c[0] === 'family_off')")
 
     def test_save_settings_sends_numbers_and_name(self):
         page = self.open()

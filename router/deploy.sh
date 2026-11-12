@@ -27,8 +27,8 @@ fi
 
 [ -f config.json ] || cp config.example.json config.json
 echo "1/3 Копирую программу на роутер…"
-COPYFILE_DISABLE=1 tar --format ustar -cf - core.py sync.py VERSION config.json web router luci \
-  | "${SSH[@]}" 'mkdir -p /root/dnevnik/data && chmod 700 /root/dnevnik/data && cd /root/dnevnik && tar xof - && chmod 755 router/*.sh router/*.cgi router/dnevnik.init luci/rpcd/luci.dnevnik'
+COPYFILE_DISABLE=1 tar --format ustar -cf - core.py auth.py sync.py VERSION config.json web router luci \
+  | "${SSH[@]}" 'mkdir -p /root/dnevnik/data && chmod 700 /root/dnevnik/data && cd /root/dnevnik && tar xof - && chmod 755 router/*.sh router/*.cgi router/*.py router/dnevnik.init luci/rpcd/luci.dnevnik'
 [ "$MODE" = "login" ] && push_login
 
 echo "2/3 Включаю службу и расписание…"

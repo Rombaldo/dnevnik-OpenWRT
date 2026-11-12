@@ -15,6 +15,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import auth
 import core
 import fetcher
 
@@ -29,6 +30,11 @@ MIN_MANUAL_GAP = 120        # кнопка «Обновить» не чаще р
 
 state = {"needLogin": not (fetcher.SESSION.exists() or (fetcher.DATA / "credentials.json").exists()), "error": None, "lastTry": 0, "syncing": False}
 wake = threading.Event()
+AUTH_DIR = None   # только для тестов: где лежит auth.json. Обычно None: в демо пароля нет, иначе берётся папка data
+
+
+def auth_dir():
+    return AUTH_DIR or (None if DEMO else fetcher.DATA)
 
 
 def worker():
@@ -67,6 +73,9 @@ def read_data():
         d["status"] = {"needLogin": False, "error": None, "syncing": False}
         d["config"] = {"name": "Тест"}
         d["version"] = VERSION
+        if auth_dir() is not None:
+            d["status"]["family"] = auth.enabled(auth_dir())
+            d["status"]["familyHint"] = auth.get_hint(auth_dir()) if d["status"]["family"] else ""
         return d
     try:
         d = json.loads(fetcher.OUT.read_text())
@@ -76,6 +85,9 @@ def read_data():
                    "canRestore": core.backup_available(fetcher.DATA)}
     d.setdefault("config", {})
     d["version"] = VERSION
+    if auth_dir() is not None:
+        d["status"]["family"] = auth.enabled(auth_dir())
+        d["status"]["familyHint"] = auth.get_hint(auth_dir()) if d["status"]["family"] else ""
     return d
 
 
@@ -100,7 +112,29 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def locked(self):
+        """Включён семейный пароль, а запрос пришёл без него: отвечаем отказом (как на роутере). True, если ответ уже отправлен."""
+        d = auth_dir()
+        if d is None or auth.authed(d, self.headers.get("Cookie")):
+            return False
+        code, body = auth.locked_reply()
+        self.send(code, json.dumps(body, ensure_ascii=False), MIME[".json"])
+        return True
+
     def do_POST(self):
+        if self.path == "/cgi-bin/auth":   # тот же адрес и те же правила, что на роутере
+            d = auth_dir()
+            if d is None:
+                return self.send(200, json.dumps({"ok": False, "message": "Это демо: пароля здесь нет."}, ensure_ascii=False), MIME[".json"])
+            try:
+                payload = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 2048)).decode("utf-8"))
+            except Exception:
+                payload = None
+            secure = self.headers.get("X-Forwarded-Proto", "").lower() == "https" or auth.is_secure_host(self.headers.get("Host"))
+            code, body, cookie = auth.handle(d, payload, self.headers.get("Cookie"), Path(d) / "auth-throttle.json", secure=secure)
+            return self.send(code, json.dumps(body, ensure_ascii=False), MIME[".json"], {"Set-Cookie": cookie} if cookie else None)
+        if self.path in ("/cgi-bin/setup", "/cgi-bin/logout", "/cgi-bin/refresh") and self.locked():
+            return
         if self.path == "/cgi-bin/setup":   # тот же адрес, что и на роутере
             if DEMO:   # демо-режим никогда не обращается к настоящему сайту
                 return self.send(200, json.dumps({"ok": False, "message": "Это демо: вход здесь не работает."}, ensure_ascii=False), MIME[".json"])
@@ -144,9 +178,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path == "/data.json":
+        if path in ("/data.json", "/cgi-bin/data"):   # /cgi-bin/data - тот же адрес, что на роутере
+            if self.locked():
+                return
             return self.send(200, json.dumps(read_data(), ensure_ascii=False), MIME[".json"])
         if path == "/offline.html":  # страница с данными внутри: можно сохранить и открыть без сети
+            if self.locked():
+                return
             html = (WEB / "index.html").read_text()
             blob = json.dumps(read_data(), ensure_ascii=False).replace("</", "<\\/")
             html = html.replace("/*INLINE_DATA*/null", blob)

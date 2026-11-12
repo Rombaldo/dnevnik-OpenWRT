@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 import venv
 from pathlib import Path
@@ -127,7 +128,8 @@ def send(bundle, router, user, identity, extra, data_dir, sync):
 
 
 def wait_for_diary(router, seconds=120):
-    url = f"http://{router}:8765/data.json"
+    """True: дневник загрузился. False: не дождались. None: страница закрыта семейным паролем, проверить нельзя."""
+    url = f"http://{router}:8765/cgi-bin/data"
     deadline = time.time() + seconds
     while time.time() < deadline:
         time.sleep(4)
@@ -136,6 +138,9 @@ def wait_for_diary(router, seconds=120):
                 d = json.loads(r.read().decode("utf-8"))
             if d.get("days") and not (d.get("status") or {}).get("needLogin"):
                 return True
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return None
         except Exception:
             pass
     return False
@@ -178,7 +183,10 @@ def main(argv=None):
         return rc
     if args.remote_data == DEFAULT_REMOTE_DATA:
         print("Жду, пока дневник загрузится (до 2 минут)…", flush=True)
-        print("Готово: дневник загрузился." if wait_for_diary(args.router) else
+        done = wait_for_diary(args.router)
+        print("Готово: дневник загрузился." if done else
+              "Вход передан. Страница закрыта паролем семьи, поэтому проверить загрузку отсюда нельзя: откройте http://dnevnik.lan и введите пароль."
+              if done is None else
               "Вход передан. Если страница http://dnevnik.lan ещё пустая, подождите пару минут и нажмите «Обновить».")
     if args.forget:
         for p in (SESSION, IDS):

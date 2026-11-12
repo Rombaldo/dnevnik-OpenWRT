@@ -4,19 +4,24 @@ START=99
 USE_PROCD=1
 APP=/root/dnevnik
 WWW=/tmp/dnevnik-www
+PRIV=/tmp/dnevnik-private   # данные дневника: вне папки веб-сервера, их отдаёт только cgi-bin/data после проверки пароля
 
 start_service() {
     umask 022
-    mkdir -p "$WWW/cgi-bin"
+    mkdir -p "$WWW/cgi-bin" "$PRIV"
+    chmod 700 "$PRIV"
+    rm -f "$WWW/data.json" "$WWW/offline.html"   # от старых версий: туда данные раньше клали открыто
     cp -f "$APP"/web/* "$WWW"/
     cp -f "$APP/router/refresh.cgi" "$WWW/cgi-bin/refresh"
     cp -f "$APP/router/setup.cgi" "$WWW/cgi-bin/setup"
     cp -f "$APP/router/logout.cgi" "$WWW/cgi-bin/logout"
-    chmod 755 "$WWW" "$WWW/cgi-bin" "$WWW/cgi-bin/refresh" "$WWW/cgi-bin/setup" "$WWW/cgi-bin/logout"
+    cp -f "$APP/router/auth.cgi" "$WWW/cgi-bin/auth"
+    cp -f "$APP/router/data.cgi" "$WWW/cgi-bin/data"
+    chmod 755 "$WWW" "$WWW/cgi-bin" "$WWW/cgi-bin/refresh" "$WWW/cgi-bin/setup" "$WWW/cgi-bin/logout" "$WWW/cgi-bin/auth" "$WWW/cgi-bin/data"
     chmod 644 "$WWW"/*.* 2>/dev/null   # веб-сервер не отдаёт файлы, закрытые от остальных
     "$APP/router/setname.sh" >/dev/null 2>&1      # имя dnevnik.lan -> текущий адрес роутера
     # сразу показываем последние сохранённые данные, потом обновляемся с сайта
-    python3 "$APP/sync.py" --rebuild --data "$APP/data" --out "$WWW/data.json" >/dev/null 2>&1
+    python3 "$APP/sync.py" --rebuild --data "$APP/data" --out "$PRIV/data.json" >/dev/null 2>&1
     ( sleep 25; "$APP/router/sync.sh" ) >/dev/null 2>&1 &
     procd_open_instance
     procd_set_param command /usr/sbin/uhttpd -f -h "$WWW" -p 0.0.0.0:8765 -x /cgi-bin -t 60 -T 30 -N 20

@@ -8,7 +8,7 @@
 		},
 		"write": {
 			"ubus": {
-				"luci.dnevnik": [ "refresh", "update", "set_config", "logout_begin", "logout_confirm", "logout_restore" ]
+				"luci.dnevnik": [ "refresh", "update", "set_config", "logout_begin", "logout_confirm", "logout_restore", "family_set", "family_off" ]
 			}
 		}
 	}
