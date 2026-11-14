@@ -333,6 +333,43 @@ def check_drops():
     return []
 
 
+def check_push():
+    """Уведомления: модуль, подключённые устройства, результат последней отправки. Криптографию не загружает, читает только файл."""
+    import importlib.util
+    have = importlib.util.find_spec("cryptography") is not None
+    try:
+        st = json.loads(read(os.path.join(DATA, "push.json")) or "{}")
+    except ValueError:
+        st = {}
+    n = len(st.get("subs") or {}) if isinstance(st.get("subs"), dict) else 0
+    last = st.get("last") or {}
+    if not have:
+        return [R("push", INFO, "Уведомления", "не включены (нужен модуль на роутере: sh /root/dnevnik/router/push.sh, около 4 МБ)")]
+    if not n:
+        return [R("push", INFO, "Уведомления", "модуль установлен, устройств пока нет (на телефоне: ⚙ → «Уведомления» по адресу из интернета)")]
+    detail = f"подключено устройств: {n}" + (f"; последняя отправка: доставлено {last.get('sent', 0)}, не вышло {last.get('failed', 0)}" if last else "")
+    if st.get("last_error") or last.get("failed"):
+        return [R("push", WARN, "Уведомления", detail + (f"; {st['last_error']}" if st.get("last_error") else ""),
+                  "проверьте связь роутера; на телефоне ⚙ → «Уведомления» → «Проверить уведомление»; если не помогает, выключите и включите уведомления на телефоне заново")]
+    return [R("push", OK, "Уведомления", detail)]
+
+
+def check_logins():
+    """Неверные попытки входа за сутки (из журнала входов). Много попыток: кто-то подбирает пароль."""
+    try:
+        log = json.loads(read(os.path.join(DATA, "logins.json")) or "[]")
+    except ValueError:
+        return []
+    since = time.time() - 86400
+    n = sum(int(e.get("n", 1)) for e in log if isinstance(e, dict) and not e.get("ok") and int(e.get("ts", 0)) >= since) if isinstance(log, list) else 0
+    if n >= 10:
+        return [R("logins", WARN, "Неверные попытки входа", f"за сутки: {n}; похоже, кто-то подбирает пароль",
+                  "задайте пароль подлиннее (LuCI → Службы → Дневник → Пароль семьи); кто и когда пытался, видно в «Устройства и входы»")]
+    if n:
+        return [R("logins", INFO, "Неверные попытки входа", f"за сутки: {n} (обычно это опечатки)")]
+    return []
+
+
 def run_checks():
     results = []
     results += check_system()
@@ -353,6 +390,8 @@ def run_checks():
         results.append(R("family", WARN, "Пароль семьи", "не задан: страницу видит любой, кто подключён к вашей сети",
                          "задайте пароль: ⚙ на странице дневника или LuCI (обязательно, если открываете дневник из интернета)"))
     results += remote
+    results += check_push()
+    results += check_logins()
     results += check_drops()
     return results, url
 

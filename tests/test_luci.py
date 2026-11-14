@@ -78,7 +78,7 @@ class PluginTests(PluginCase):
         js = VIEW.read_text()
         for m in methods:
             self.assertIn(f"method: '{m}'", js, m)                                   # страница вызывает только существующие методы
-        self.assertEqual(set(acl["read"]["ubus"]["luci.dnevnik"]), {"status", "log", "check_update", "remote_info", "doctor"})   # чтение только безвредное: «проверить всё» ничего не меняет
+        self.assertEqual(set(acl["read"]["ubus"]["luci.dnevnik"]), {"status", "log", "check_update", "remote_info", "doctor", "devices_list"})   # чтение только безвредное: «проверить всё» ничего не меняет
 
     def test_family_password_methods(self):
         import auth
@@ -160,6 +160,54 @@ class PluginTests(PluginCase):
         self.assertTrue({"system", "web", "cron", "internet", "family"} <= ids)
         self.assertIn(r["summary"]["verdict"], ("ok", "notes", "problems"))
         self.assertTrue(all(set(c) >= {"id", "status", "title", "detail", "fix"} for c in r["results"]))
+
+    def copy_modules(self):
+        for f in ("auth.py", "devices.py", "push.py", "notify.py"):
+            shutil.copy(ROOT / f, self.home / f)
+        self.env["DNEVNIK_SEEN"] = str(self.run_dir / "seen.json")
+
+    def test_devices_list_collects_subscriptions_logins_and_last_seen(self):
+        self.copy_modules()
+        import auth
+        import devices
+        import push
+        data = self.home / "data"
+        auth.set_password(data, "семейный-пароль")
+        push.save(data, {"subs": {"abc": {"endpoint": "https://web.push.apple.com/secret-token", "p256dh": "x", "auth": "y", "name": "Телефон Ани", "label": "iPhone · Safari",
+                                          "created": 1_800_000_000, "prefs": {"types": {"mark": True, "homework": False}, "quiet": {"on": True}}, "pending": [{"id": 1}], "fail": 2}}})
+        devices.record_login(data, False, "curl", "127.0.0.1", "a" * 12)
+        devices.record_login(data, True, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Version/18 Mobile/15E Safari/604", "192.168.10.5", "b" * 12)
+        devices.touch(self.run_dir / "seen.json", "b" * 12, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Version/18 Mobile/15E Safari/604", "192.168.10.5")
+        r = self.call("devices_list")
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["family"])
+        self.assertEqual(r["failed24h"], 1)
+        s = r["subs"][0]
+        self.assertEqual((s["name"], s["label"], s["service"], s["pending"], s["fail"], s["types"], s["quiet"]), ("Телефон Ани", "iPhone · Safari", "Apple", 1, 2, ["mark"], True))
+        self.assertEqual([e["ok"] for e in r["logins"]], [True, False])
+        self.assertEqual((r["seen"][0]["dev"], r["seen"][0]["where"]), ("iPhone · Safari", "home"))
+        self.assertNotIn("secret-token", json.dumps(r))                                      # адрес устройства с токеном в ответ не попадает
+
+    def test_devices_list_on_a_fresh_router_is_empty_not_an_error(self):
+        self.copy_modules()
+        r = self.call("devices_list")
+        self.assertEqual((r["ok"], r["subs"], r["logins"], r["seen"], r["failed24h"], r["family"]), (True, [], [], [], 0, False))
+
+    def test_device_remove_and_logins_clear(self):
+        self.copy_modules()
+        import devices
+        import push
+        data = self.home / "data"
+        push.save(data, {"subs": {"abc": {"endpoint": "https://fcm.googleapis.com/x", "prefs": {"types": {}}}}})
+        devices.record_login(data, True, "x", "127.0.0.1", "a" * 12)
+        devices.touch(self.run_dir / "seen.json", "a" * 12, "x", "127.0.0.1")
+        self.assertFalse(self.call("device_remove", {"id": "нет"})["ok"])
+        self.assertTrue(self.call("device_remove", {"id": "abc"})["ok"])
+        self.assertEqual(push.load(data)["subs"], {})
+        self.assertFalse(self.call("device_remove", {"id": "abc"})["ok"])                    # повторно: честно «уже нет»
+        self.assertTrue(self.call("logins_clear")["ok"])
+        self.assertEqual((devices.recent_logins(data), devices.seen_list(self.run_dir / "seen.json")), ([], []))
+        self.assertTrue(self.call("logins_clear")["ok"])                                     # повторно безвредно
 
     def test_password_methods_are_write_only(self):
         acl = json.loads(ACL.read_text())["luci-app-dnevnik"]
@@ -662,6 +710,78 @@ class ViewTests(unittest.TestCase):
         page.click("button:has-text('Отключить пароль')")
         page.click("#modal button.cbi-button-negative")
         page.wait_for_function("window.calls.some(c => c[0] === 'family_off')")
+
+    DEVICES = {"ok": True, "now": 1_800_000_600, "family": True, "failed24h": 0,
+               "subs": [{"id": "s1", "name": "Планшет Ани", "label": "Android (SM-X710) · Chrome", "service": "Google", "created": 1_800_000_000, "pending": 0, "fail": 0, "types": ["mark"], "quiet": False},
+                        {"id": "s2", "name": "", "label": "iPhone · Safari", "service": "Apple", "created": 1_800_000_100, "pending": 2, "fail": 1, "types": [], "quiet": False}],
+               "seen": [{"did": "a" * 12, "dev": "iPhone · Safari", "where": "internet", "ts": 1_800_000_570}, {"did": "b" * 12, "dev": "Windows · Chrome", "where": "home", "ts": 1_799_990_000}],
+               "logins": [{"ts": 1_800_000_500, "ok": False, "dev": "Linux · Firefox", "where": "internet", "did": "c" * 12, "n": 3}, {"ts": 1_800_000_000, "ok": True, "dev": "iPhone · Safari", "where": "home", "did": "a" * 12, "n": 1}]}
+
+    def devices_page(self, **over):
+        return self.open(answers={"devices_list": dict(self.DEVICES, **over)})
+
+    def test_devices_card_shows_subscriptions_seen_and_login_journal(self):
+        page = self.devices_page()
+        text = page.inner_text(".dn")
+        for needle in ("Устройства и входы", "Планшет Ани · Android (SM-X710) · Chrome", "Google, подключено", "iPhone · Safari", "в очереди: 2", "сбоев подряд: 1",
+                       "из интернета, последний раз только что", "из дома, последний раз 3 ч назад", "✗ Неверный пароль (×3): Linux · Firefox", "✓ Вошёл: iPhone · Safari", "Всё спокойно"):
+            self.assertIn(needle, text)
+        self.assertEqual(self.errors, [])
+
+    def test_failed_attempts_turn_the_pill_to_a_warning(self):
+        page = self.devices_page(failed24h=7)
+        self.assertIn("Неверных попыток за сутки: 7", page.inner_text(".dn-card:has(.dn-title:has-text('Устройства и входы')) .dn-pill"))
+        self.assertEqual(page.get_attribute(".dn-card:has(.dn-title:has-text('Устройства и входы')) .dn-pill", "class").split()[-1], "warn")
+
+    def test_empty_lists_and_no_family_password_are_explained(self):
+        page = self.devices_page(subs=[], seen=[], logins=[], family=False)
+        text = page.inner_text(".dn")
+        for needle in ("Пока ни одного устройства", "Пока никого", "Пока записей нет", "Пароль семьи не задан: входы не записываются"):
+            self.assertIn(needle, text)
+
+    def test_old_router_without_the_method_gives_a_hint_not_a_crash(self):
+        page = self.open()                                                                      # ответ по умолчанию: {ok: true, message: 'ок'} без списков
+        self.assertIn("Устройства и входы", page.inner_text(".dn"))
+        page2 = self.open(answers={"devices_list": {"ok": False}})
+        self.assertIn("Обновите программу", page2.inner_text(".dn"))
+        self.assertEqual(self.errors, [])
+
+    def test_removing_a_device_needs_confirmation(self):
+        page = self.devices_page()
+        page.click(".dn-card:has(.dn-title:has-text('Устройства и входы')) button:has-text('Отключить') >> nth=0")
+        self.assertIn("Отключить устройство?", page.inner_text("#modal h4"))
+        self.assertIn("Планшет Ани", page.inner_text("#modal"))
+        self.assertNotIn("device_remove", self.names(page))                                      # от одного нажатия ничего не происходит
+        page.click("#modal >> text=Отмена")
+        self.assertNotIn("device_remove", self.names(page))
+        page.click(".dn-card:has(.dn-title:has-text('Устройства и входы')) button:has-text('Отключить') >> nth=0")
+        page.click("#modal button.cbi-button-negative")
+        page.wait_for_function("window.calls.some(c => c[0] === 'device_remove')")
+        self.assertEqual(page.evaluate("window.calls.find(c => c[0] === 'device_remove')[1]"), ["s1"])
+        page.wait_for_selector(".dn-note.ok")
+
+    def test_clearing_the_journal_needs_confirmation(self):
+        page = self.devices_page()
+        page.click("button:has-text('Очистить журнал')")
+        self.assertIn("Очистить журнал входов?", page.inner_text("#modal h4"))
+        self.assertNotIn("logins_clear", self.names(page))
+        page.click("#modal >> text=Отмена")
+        page.click("button:has-text('Очистить журнал')")
+        page.click("#modal button.cbi-button-negative")
+        page.wait_for_function("window.calls.some(c => c[0] === 'logins_clear')")
+
+    def test_refresh_button_reloads_the_list(self):
+        page = self.devices_page()
+        before = self.names(page).count("devices_list")
+        page.click("button:has-text('Обновить список')")
+        page.wait_for_function(f"window.calls.filter(c => c[0] === 'devices_list').length > {before}")
+
+    def test_device_text_from_the_router_is_not_executed(self):
+        evil = '<img src=x onerror="window.pwned=1">'
+        page = self.devices_page(subs=[dict(self.DEVICES["subs"][0], name=evil, label=evil)], seen=[{"did": "a" * 12, "dev": evil, "where": "home", "ts": 1}],
+                                 logins=[{"ts": 1, "ok": True, "dev": evil, "where": "home", "did": "a" * 12, "n": 1}])
+        self.assertIsNone(page.query_selector(".dn img"))
+        self.assertIsNone(page.evaluate("window.pwned"))
 
     def test_save_settings_sends_numbers_and_name(self):
         page = self.open()

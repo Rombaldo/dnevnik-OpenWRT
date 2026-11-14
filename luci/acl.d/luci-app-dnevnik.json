@@ -3,12 +3,12 @@
 		"description": "Дневник: состояние, обновление, настройки",
 		"read": {
 			"ubus": {
-				"luci.dnevnik": [ "status", "log", "check_update", "remote_info", "doctor" ]
+				"luci.dnevnik": [ "status", "log", "check_update", "remote_info", "doctor", "devices_list" ]
 			}
 		},
 		"write": {
 			"ubus": {
-				"luci.dnevnik": [ "refresh", "update", "set_config", "logout_begin", "logout_confirm", "logout_restore", "family_set", "family_off" ]
+				"luci.dnevnik": [ "refresh", "update", "set_config", "logout_begin", "logout_confirm", "logout_restore", "family_set", "family_off", "device_remove", "logins_clear" ]
 			}
 		}
 	}

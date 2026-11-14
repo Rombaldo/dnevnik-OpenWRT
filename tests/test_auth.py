@@ -361,7 +361,7 @@ class RouterCgiTests(unittest.TestCase):
         auth.set_password(self.home / "data", PASSWORD)
         status, payload, head, err = self.cgi("auth.cgi", body={"action": "login", "password": "неверный-пароль"})
         self.assertEqual(status, 401)
-        self.assertNotIn("Set-Cookie", head)
+        self.assertNotIn("dnevnik_auth=", head)                                           # входного cookie после неверного пароля нет (метка устройства dnevnik_dev не в счёт)
         self.assertNotIn("неверный-пароль", payload + head + err)
         status, payload, head, _ = self.cgi("auth.cgi", body={"action": "login", "password": PASSWORD})
         self.assertEqual(status, 200)
@@ -520,7 +520,7 @@ class RouterLayoutTests(unittest.TestCase):
         install, deploy = self.read("router/install.sh"), self.read("router/deploy.sh")
         for name in ("auth.py", "router/auth.cgi", "router/data.cgi", "router/password.py"):
             self.assertIn(name, install, name)
-        self.assertIn("core.py auth.py sync.py", deploy)
+        self.assertIn("core.py auth.py devices.py notify.py push.py sync.py", deploy)
         self.assertIn("dnevnik-private", self.read("router/uninstall.sh"))
 
     def test_web_folder_holds_no_personal_data(self):

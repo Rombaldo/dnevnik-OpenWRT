@@ -392,6 +392,13 @@ try { const s = JSON.parse(localStorage.getItem("settings") || "{}");
   .mm-big.m1, .mm-avg.m1 { background: var(--m1); }
   .markmodal .mbtns { margin-top: 4px; }
   .att-sub { color: var(--muted); font-size: 14px; }
+  /* ---- уведомления ---- */
+  .qrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0 2px; font-size: 16px; }
+  .qrow input[type=time] { min-height: 44px; padding: 6px 10px; font-size: 18px; border-radius: 12px; border: 2px solid var(--line); background: var(--bg); color: var(--ink); }
+  .evrow { padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .evrow:first-of-type { border-top: 0; }
+  .evrow b { display: block; font-size: 16px; }
+  .evrow small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -671,7 +678,11 @@ function render() {
     if (safe && document.activeElement !== safe) safe.focus();                    // по умолчанию выбрана безопасная кнопка
     if (confirmStep === 2 && confirmReadyAt > Date.now()) setTimeout(() => { if (confirmStep === 2) render(); }, 500);
   }
-  if (showSettings) { $("#main").innerHTML = settingsView(); return; }
+  if (showSettings) {
+    $("#main").innerHTML = settingsView();
+    if (!pushState.loaded && !pushState.loading) setTimeout(loadPush, 0);          // состояние уведомлений узнаём один раз, когда открыли настройки
+    return;
+  }
   let body;
   const needSetup = !window.__DATA__ && data?.status?.needLogin && !data.days?.length;
   if (needSetup || (showSetup && !window.__DATA__)) {
@@ -687,6 +698,128 @@ function render() {
     body = `<div class="grid ${aside ? "two" : ""}"><div>${main}</div>${aside ? `<div class="aside">${aside}</div>` : ""}</div>`;
   }
   $("#main").innerHTML = (showSetup && !setupWait ? "" : statusBanner()) + body + (data?.version ? `<div class="ver">Мой дневник · версия ${esc(data.version)}</div>` : "");
+}
+
+// ---------- Уведомления (веб-пуш) ----------
+const PUSH_TYPES = [["mark", "Новые оценки", "Когда поставили оценку"], ["homework", "Новая домашка", "Когда задали или изменили задание"],
+  ["schedule", "Отмена и перенос уроков", "Когда урок отменили или изменили расписание"], ["attendance", "Пропуски и опоздания", "Когда отметили пропуск или опоздание"]];
+const PUSH_WHY = {
+  insecure: "Уведомления работают, когда дневник открыт по адресу из интернета (начинается с https://). Сейчас вы зашли по домашнему адресу: откройте дневник по адресу из «Приглашения для семьи».",
+  "ios-home": "На iPhone уведомления работают, когда страница добавлена на экран «Домой» (Поделиться → «На экран Домой») и открыта оттуда. Нужна iOS 16.4 или новее.",
+  unsupported: "Этот браузер не умеет показывать уведомления от сайтов. Попробуйте Chrome на Android или Safari на iPhone (со страницей на экране «Домой»).",
+  offline: "В сохранённой копии уведомления недоступны.",
+};
+let pushState = { name: "", loaded: false, loading: false, supported: false, why: "", ready: true, subscribed: false, perm: "default", prefs: null, busy: false, msg: null, events: null };
+const defaultPrefs = () => ({ types: { mark: true, homework: true, schedule: true, attendance: true }, quiet: { on: false, from: "22:00", to: "07:00" } });
+function pushSupport() {
+  if (window.__DATA__) return { ok: false, why: "offline" };
+  if (!window.isSecureContext) return { ok: false, why: "insecure" };
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const standalone = navigator.standalone || (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+    return { ok: false, why: ios && !standalone ? "ios-home" : "unsupported" };
+  }
+  return { ok: true };
+}
+const keyBytes = (b64) => Uint8Array.from(atob(b64.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(b64.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
+async function pushReg() { try { return await navigator.serviceWorker.getRegistration("./"); } catch { return null; } }
+async function loadPush() {
+  if (pushState.loading) return;
+  pushState.loading = true;
+  const sup = pushSupport();
+  pushState.supported = sup.ok; pushState.why = sup.why || "";
+  if (sup.ok) {
+    pushState.perm = Notification.permission;
+    try {
+      const sub = await (await pushReg())?.pushManager.getSubscription();
+      if (sub) {
+        const r = await api("cgi-bin/push", { action: "get", endpoint: sub.endpoint });
+        pushState.subscribed = !!r.subscribed;
+        if (r.subscribed) { pushState.prefs = r.prefs; pushState.name = r.name || ""; }
+      }
+    } catch {}
+  }
+  if (!window.__DATA__) {
+    const e = await api("cgi-bin/push", { action: "events", limit: 6 });
+    pushState.events = e.ok ? e.events || [] : [];
+  }
+  pushState.loaded = true; pushState.loading = false;
+  if (showSettings) render();
+}
+async function enablePush() {
+  pushState.busy = true; pushState.msg = null; render();
+  try {
+    const perm = await Notification.requestPermission();
+    pushState.perm = perm;
+    if (perm !== "granted") { pushState.msg = { ok: false, text: "Уведомления запрещены для этого сайта. Разрешите их в настройках браузера и попробуйте снова." }; return; }
+    const cfg = await api("cgi-bin/push", { action: "config" });
+    if (locked) return;
+    if (!cfg.ready) { pushState.ready = false; pushState.msg = { ok: false, text: cfg.message || "На роутере не установлен модуль уведомлений." }; return; }
+    const reg = await navigator.serviceWorker.register("sw.js", { scope: "./" });
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (sub) {                                          // старая подписка, которую роутер не знает: делаем заново
+      const g = await api("cgi-bin/push", { action: "get", endpoint: sub.endpoint });
+      if (!g.subscribed) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    }
+    sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(cfg.publicKey) });
+    const r = await api("cgi-bin/push", { action: "subscribe", subscription: sub.toJSON(), prefs: pushState.prefs || undefined, ua: navigator.userAgent.replace(/\s+/g, " ").slice(0, 300), name: pushState.name || undefined });
+    if (locked) return;
+    if (!r.ok) { await sub.unsubscribe().catch(() => {}); pushState.msg = { ok: false, text: r.message || "Не получилось включить уведомления." }; return; }
+    pushState.subscribed = true; pushState.prefs = r.prefs;
+    pushState.msg = { ok: true, text: "Уведомления включены. Нажмите «Проверить уведомление»: оно должно прийти в течение минуты." };
+  } catch (e) {
+    pushState.msg = { ok: false, text: "Не получилось включить уведомления: " + (e && e.message ? e.message : "ошибка") + ". Если это iPhone, проверьте, что страница открыта с экрана «Домой»." };
+  } finally { pushState.busy = false; render(); }
+}
+async function savePushPrefs() {
+  const sub = await (await pushReg())?.pushManager.getSubscription();
+  if (!sub) return;
+  const r = await api("cgi-bin/push", { action: "update", endpoint: sub.endpoint, prefs: pushState.prefs });
+  if (r.ok) pushState.prefs = r.prefs; else pushState.msg = { ok: false, text: r.message || "Не получилось сохранить." };
+  render();
+}
+async function testPush() {
+  pushState.busy = true; pushState.msg = null; render();
+  const sub = await (await pushReg())?.pushManager.getSubscription();
+  const r = sub ? await api("cgi-bin/push", { action: "test", endpoint: sub.endpoint }) : { ok: false, message: "Устройство не подключено." };
+  pushState.msg = { ok: !!r.ok, text: r.message || (r.ok ? "Отправлено." : "Не получилось.") };
+  pushState.busy = false; render();
+}
+async function disablePush() {
+  pushState.busy = true; pushState.msg = null; render();
+  try {
+    const sub = await (await pushReg())?.pushManager.getSubscription();
+    if (sub) { await api("cgi-bin/push", { action: "unsubscribe", endpoint: sub.endpoint }); await sub.unsubscribe().catch(() => {}); }
+    pushState.subscribed = false;
+    pushState.msg = { ok: true, text: "Уведомления на этом устройстве выключены." };
+  } finally { pushState.busy = false; render(); }
+}
+const evWhen = (ts) => { const d = new Date(ts * 1000); return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+function notifyCard() {
+  const s = pushState, p = s.prefs || defaultPrefs();
+  let body;
+  if (!s.loaded) body = `<p class="hint">Проверяю…</p>`;
+  else if (!s.supported) body = `<p class="hint">${esc(PUSH_WHY[s.why] || PUSH_WHY.unsupported)}</p>`;
+  else if (!s.subscribed) body = `<p class="hint">Придёт уведомление, когда поставят оценку, зададут домашку, отменят урок или отметят пропуск. Работает и когда страница закрыта.
+      Текст уведомления шифруется: прочитать его может только этот телефон.</p>
+      <label for="pn-name" class="hint" style="display:block;margin-top:10px">Название этого устройства (по желанию, видно в списке устройств на роутере)</label>
+      <input class="pw" id="pn-name" data-pname type="text" maxlength="30" autocomplete="off" placeholder="например: Планшет Ани" value="${esc(s.name)}">
+      <button class="setbtn main" data-push="enable" ${s.busy ? "disabled" : ""}>${s.busy ? "Включаю…" : "Включить уведомления на этом устройстве"}</button>`;
+  else body = `<p class="hint">Включены на этом устройстве. О чём сообщать:</p>
+      ${PUSH_TYPES.map(([k, label, hint]) => `<div class="setrow"><div class="lbl">${esc(label)}<small>${esc(hint)}</small></div>
+        <button class="sw" role="switch" aria-checked="${!!p.types[k]}" aria-label="${esc(label)}" data-pf="${k}"></button></div>`).join("")}
+      <label for="pn-name" class="hint" style="display:block;margin-top:10px">Название устройства (видно в списке на роутере)</label>
+      <input class="pw" id="pn-name" data-pname type="text" maxlength="30" autocomplete="off" placeholder="например: Планшет Ани" value="${esc(s.name)}">
+      <div class="setrow"><div class="lbl">Тихие часы<small>В это время уведомления не приходят, утром придёт сводка</small></div>
+        <button class="sw" role="switch" aria-checked="${!!p.quiet.on}" aria-label="Тихие часы" data-pq="on"></button></div>
+      ${p.quiet.on ? `<div class="qrow">с <input type="time" value="${esc(p.quiet.from)}" data-pq="from" aria-label="Тихие часы с"> до <input type="time" value="${esc(p.quiet.to)}" data-pq="to" aria-label="Тихие часы до"></div>` : ""}
+      <button class="setbtn" data-push="test" ${s.busy ? "disabled" : ""}>Проверить уведомление</button>
+      <button class="setbtn danger" data-push="disable" ${s.busy ? "disabled" : ""}>Выключить на этом устройстве</button>`;
+  const msg = s.msg ? `<div class="msg ${s.msg.ok ? "good" : "bad"}">${esc(s.msg.text)}</div>` : "";
+  const ev = s.events && s.events.length ? `<h2 style="margin-top:16px;font-size:16px">Что нового</h2>${s.events.map((e) => `<div class="evrow"><b>${esc(e.title)}</b>${esc(e.body)}<small>${esc(evWhen(e.ts))}</small></div>`).join("")}`
+    : s.loaded && s.events ? `<p class="hint" style="margin-top:12px">Пока ничего нового.</p>` : "";
+  return `<div class="set-card"><h2>Уведомления</h2>${body}${msg}${ev}</div>`;
 }
 
 // ---------- Семейный пароль ----------
@@ -801,6 +934,7 @@ function settingsView() {
     <div class="set-card"><h2>Порядок</h2>
       <button class="setbtn ${askClearDone ? "asked" : ""}" data-clear-done>${askClearDone ? "Точно снять все отметки? Нажмите ещё раз" : "Снять все отметки «сделано»"}</button>
       <button class="setbtn" data-reset-settings>Сбросить настройки</button></div>
+    ${window.__DATA__ ? "" : notifyCard()}
     ${window.__DATA__ || typeof data?.status?.family !== "boolean" ? "" : passCard()}
     ${canLogout ? `<div class="set-card"><h2>Аккаунт</h2><p class="hint">Вход в Дневник.ру хранится на роутере.</p>
       <button class="setbtn danger" data-change-login>Выйти из аккаунта</button></div>` : ""}
@@ -1263,6 +1397,17 @@ document.addEventListener("touchend", (e) => {
 }, { passive: true });
 
 // ---------- События ----------
+document.addEventListener("input", (e) => { if (e.target.matches?.("input[data-pname]")) pushState.name = e.target.value.slice(0, 30); });
+document.addEventListener("change", (e) => {
+  if (e.target.matches?.("input[data-pname]") && pushState.subscribed) {          // имя устройства сохраняем, когда закончили печатать
+    pushState.name = e.target.value.slice(0, 30);
+    (async () => { const sub = await (await pushReg())?.pushManager.getSubscription(); if (sub) await api("cgi-bin/push", { action: "update", endpoint: sub.endpoint, name: pushState.name }); })();
+    return;
+  }
+  const t = e.target.closest?.("input[data-pq]");                                 // время тихих часов
+  if (t && /^\d\d:\d\d$/.test(t.value)) { pushState.prefs = pushState.prefs || defaultPrefs(); pushState.prefs.quiet[t.dataset.pq] = t.value; savePushPrefs(); }
+});
+
 document.addEventListener("submit", (e) => {
   if (e.target.id === "setup-form") { e.preventDefault(); submitSetup(e.target); }
   if (e.target.id === "lock-form") { e.preventDefault(); submitLock(e.target); }
@@ -1270,6 +1415,12 @@ document.addEventListener("submit", (e) => {
 });
 
 document.addEventListener("click", (e) => {
+  const pu = e.target.closest("[data-push]");
+  if (pu) { const v = pu.dataset.push; if (v === "enable") enablePush(); else if (v === "test") testPush(); else if (v === "disable") disablePush(); return; }
+  const pf = e.target.closest("[data-pf]");
+  if (pf) { pushState.prefs = pushState.prefs || defaultPrefs(); pushState.prefs.types[pf.dataset.pf] = !pushState.prefs.types[pf.dataset.pf]; render(); savePushPrefs(); return; }
+  const pq = e.target.closest("button[data-pq]");
+  if (pq) { pushState.prefs = pushState.prefs || defaultPrefs(); pushState.prefs.quiet.on = !pushState.prefs.quiet.on; render(); savePushPrefs(); return; }
   if (e.target.closest("[data-mark-close]")) { markKey = null; showMarkModal(); return; }
   const mk = e.target.closest("[data-mark]");
   if (mk) { markKey = mk.dataset.mark; showMarkModal(); return; }

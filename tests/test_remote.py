@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -435,6 +436,49 @@ class DoctorTests(RemoteBase):
         self.assertIn("✗ Вход в Дневник.ру: нужно войти заново", out)
         self.assertIn("! Свежесть данных", out)
 
+    def test_push_states(self):
+        self.have_tailscale(False)
+        port = self.good_port()
+        code, out = self.doctor(port=port)
+        self.assertIn("Уведомления", out)                                                 # статус виден всегда (модуль в тестовой среде есть или нет)
+        (self.home / "data" / "push.json").write_text(json.dumps({"subs": {"a": {}, "b": {}}, "last": {"sent": 3, "failed": 0}}))
+        code, out = self.doctor("--json", port=port)
+        push = next(r for r in json.loads(out)["results"] if r["id"] == "push")
+        if "подключено устройств: 2" in push["detail"]:                                   # модуль cryptography есть в этой среде
+            self.assertEqual(push["status"], "ok")
+            self.assertIn("доставлено 3", push["detail"])
+            (self.home / "data" / "push.json").write_text(json.dumps({"subs": {"a": {}}, "last": {"sent": 0, "failed": 1}, "last_error": "служба пушей ответила 403"}))
+            code, out = self.doctor("--json", port=port)
+            push = next(r for r in json.loads(out)["results"] if r["id"] == "push")
+            self.assertEqual(push["status"], "warn")
+            self.assertIn("403", push["detail"])
+            self.assertIn("Проверить уведомление", push["fix"])
+        else:
+            self.assertEqual(push["status"], "info")
+            self.assertIn("push.sh", push["detail"])
+
+    def test_failed_logins_in_the_journal(self):
+        self.have_tailscale(False)
+        port = self.good_port()
+        now = int(time.time())
+        (self.home / "data" / "logins.json").write_text(json.dumps([{"ts": now - 100, "ok": False, "n": 3, "dev": "x", "where": "home", "did": "a"}]))
+        code, out = self.doctor(port=port)
+        self.assertIn("· Неверные попытки входа: за сутки: 3", out)
+        self.assertEqual(code, 0)
+        (self.home / "data" / "logins.json").write_text(json.dumps([{"ts": now - 100, "ok": False, "n": 12, "dev": "x", "where": "internet", "did": "a"},
+                                                                    {"ts": now - 90000, "ok": False, "n": 99, "dev": "x", "where": "internet", "did": "b"}]))
+        code, out = self.doctor(port=port)
+        self.assertIn("! Неверные попытки входа: за сутки: 12", out)                           # вчерашние (99) не считаются
+        self.assertIn("подбирает пароль", out)
+        (self.home / "data" / "logins.json").write_text("{не json")
+        self.assertIn("ИТОГ", self.doctor(port=port)[1])
+
+    def test_push_without_module_is_only_a_note(self):
+        self.have_tailscale(False)
+        code, out = self.doctor(port=self.good_port())
+        self.assertEqual(code, 0)
+        self.assertNotIn("✗ Уведомления", out)
+
     def release(self, text):
         f = self.tmp / "openwrt_release"
         f.write_text(f"DISTRIB_ID='OpenWrt'\nDISTRIB_RELEASE='{text}'\n")
@@ -518,3 +562,68 @@ class DoctorTests(RemoteBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PushShTests(RemoteBase):
+    """router/push.sh: ставит модуль уведомлений, если места хватает; подставные apk, df и python3."""
+    PUSH = ROOT / "router" / "push.sh"
+
+    def setUp(self):
+        super().setUp()
+        self.py = self.tmp / "fakepy"
+        # подставной python3: «import cryptography» удаётся, только если есть файл-флаг; остальное пишет в журнал
+        put(self.py, '#!/bin/sh\necho "py $*" >> "$FAKE/calls"\ncase "$*" in *"import cryptography"*) [ -f "$FAKE/have_crypto" ] && exit 0 || exit 1;; esac\n'
+                     'case "$*" in *json.load*) echo "${FAKE_DEVICES:-0}"; exit 0;; esac\ncat >/dev/null\nexit 0\n')
+
+    def run_push(self, *args, **env):
+        e = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE": str(self.fake), "BIN": str(self.bin), "DNEVNIK_HOME": str(self.home), "DNEVNIK_PY": str(self.py),
+             "DNEVNIK_FREE_PATH": str(self.tmp)}
+        e.update({k: str(v) for k, v in env.items()})
+        r = subprocess.run(["sh", str(self.PUSH), *args], capture_output=True, text=True, env=e, timeout=60)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_syntax(self):
+        self.assertEqual(subprocess.run(["sh", "-n", str(self.PUSH)]).returncode, 0)
+
+    def test_installs_the_module_and_prepares_keys(self):
+        put(self.bin / "apk", '#!/bin/sh\necho "apk $*" >> "$FAKE/calls"\n[ "$2" = python3-cryptography ] && touch "$FAKE/have_crypto"\nexit 0\n')
+        code, out = self.run_push()
+        self.assertEqual(code, 0, out)
+        self.assertIn("apk add python3-cryptography", self.calls())
+        self.assertTrue(any("import push" in c or c.startswith("py -") for c in self.calls()))     # ключи подготовлены
+        self.assertIn("Готово. Включите уведомления на телефоне", out)
+
+    def test_install_that_does_not_help_fails_with_a_message(self):
+        code, out = self.run_push()                                                       # подставной apk ничего не меняет: модуль так и не появился
+        self.assertEqual(code, 1, out)
+        self.assertIn("Python его не видит", out)
+
+    def test_module_already_there_changes_nothing_and_prepares_keys(self):
+        (self.fake / "have_crypto").write_text("1")
+        code, out = self.run_push()
+        self.assertEqual(code, 0, out)
+        self.assertIn("уже установлен", out)
+        self.assertEqual([c for c in self.calls() if c.startswith("apk")], [])
+        self.assertIn("Проверить уведомление", out)                                         # объяснено, что делать на телефоне
+        self.assertIn("https", out)
+
+    def test_not_enough_space_is_a_clear_message(self):
+        self.set("free_kb", "5000")
+        code, out = self.run_push()
+        self.assertEqual(code, 2)
+        self.assertIn("свободно 4 МБ", out)
+        self.assertEqual([c for c in self.calls() if c.startswith("apk")], [])
+
+    def test_status_and_unknown_command(self):
+        code, out = self.run_push("status")
+        self.assertIn("не установлен", out)
+        (self.fake / "have_crypto").write_text("1")
+        code, out = self.run_push("status", FAKE_DEVICES=3)
+        self.assertIn("Модуль уведомлений: установлен", out)
+        self.assertEqual(self.run_push("bogus")[0], 1)
+
+    def test_requires_installed_program(self):
+        shutil.rmtree(self.home / "router")
+        code, out = self.run_push()
+        self.assertEqual(code, 1)
+        self.assertIn("дневник не установлен", out)

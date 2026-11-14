@@ -25,6 +25,7 @@ OUT = os.path.join(PRIV, "data.json")
 SYNC_LOG, UPDATE_LOG = os.path.join(TMPD, "dnevnik-sync.log"), os.path.join(TMPD, "dnevnik-update.log")
 SYNC_LOCK, UPDATE_PID = os.path.join(TMPD, "dnevnik-sync.lock"), os.path.join(TMPD, "dnevnik-update.pid")
 LAST_REFRESH = os.path.join(TMPD, "dnevnik-lastrefresh")
+SEEN = os.environ.get("DNEVNIK_SEEN", os.path.join(TMPD, "dnevnik-seen.json"))
 EVERY = (5, 10, 15, 20, 30, 60)
 MIN_REFRESH_GAP = 120
 CRON_MARK = "dnevnik/router/sync.sh"
@@ -313,12 +314,39 @@ def doctor(_):
         return {"ok": False, "message": f"Проверка не удалась: {type(e).__name__}: {e}"}
 
 
+def devices_list(_):
+    """Кто подключён и кто заходил: устройства с уведомлениями, «последний заход», журнал входов, неверные попытки за сутки."""
+    import auth
+    import devices as dv
+    import push as pu
+    now = time.time()
+    return {"ok": True, "now": int(now), "family": auth.enabled(DATA), "subs": pu.describe(DATA), "logins": dv.recent_logins(DATA, 30),
+            "seen": dv.seen_list(SEEN)[:30], "failed24h": dv.failed_since(DATA, now - 86400)}
+
+
+def device_remove(args):
+    import push as pu
+    ok = pu.remove_sub(DATA, str(args.get("id") or ""))
+    return {"ok": ok, "message": "Устройство отключено от уведомлений." if ok else "Такого устройства нет (возможно, уже отключено)."}
+
+
+def logins_clear(_):
+    import devices as dv
+    dv.clear_logins(DATA)
+    try:
+        os.unlink(SEEN)
+    except OSError:
+        pass
+    return {"ok": True, "message": "Журнал входов очищен."}
+
+
 METHODS = {
     "status": (status, {}), "log": (log, {"which": ""}), "refresh": (refresh, {}), "check_update": (check_update, {}),
     "update": (update, {}), "set_config": (set_config, {"every": 0, "from": 0, "to": 0, "name": ""}),
     "logout_begin": (logout_begin, {}), "logout_confirm": (logout_confirm, {"token": ""}), "logout_restore": (logout_restore, {}),
     "family_set": (family_set, {"password": "", "hint": ""}), "family_off": (family_off, {}),
     "remote_info": (remote_info, {}), "doctor": (doctor, {}),
+    "devices_list": (devices_list, {}), "device_remove": (device_remove, {"id": ""}), "logins_clear": (logins_clear, {}),
 }
 
 

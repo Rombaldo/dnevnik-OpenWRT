@@ -17,7 +17,9 @@ from pathlib import Path
 
 import auth
 import core
+import devices
 import fetcher
+import push
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
@@ -30,7 +32,12 @@ MIN_MANUAL_GAP = 120        # кнопка «Обновить» не чаще р
 
 state = {"needLogin": not (fetcher.SESSION.exists() or (fetcher.DATA / "credentials.json").exists()), "error": None, "lastTry": 0, "syncing": False}
 wake = threading.Event()
+PUSH_DIR = None   # только для тестов: где лежат подписки уведомлений. Обычно None: в демо уведомлений нет, иначе папка data
 AUTH_DIR = None   # только для тестов: где лежит auth.json. Обычно None: в демо пароля нет, иначе берётся папка data
+
+
+def push_dir():
+    return PUSH_DIR or (None if DEMO else fetcher.DATA)
 
 
 def auth_dir():
@@ -132,7 +139,27 @@ class Handler(BaseHTTPRequestHandler):
                 payload = None
             secure = self.headers.get("X-Forwarded-Proto", "").lower() == "https" or auth.is_secure_host(self.headers.get("Host"))
             code, body, cookie = auth.handle(d, payload, self.headers.get("Cookie"), Path(d) / "auth-throttle.json", secure=secure)
+            if isinstance(payload, dict) and payload.get("action") == "login" and code in (200, 401) and body.get("enabled") is not False:   # журнал входов, как на роутере
+                try:
+                    did = devices.dev_id_from_cookie(self.headers.get("Cookie")) or devices.new_dev_id()
+                    devices.record_login(d, code == 200, self.headers.get("User-Agent"), self.client_address[0], did)
+                    if code == 200:
+                        devices.touch(Path(d) / "devices-seen.json", did, self.headers.get("User-Agent"), self.client_address[0])
+                except Exception:
+                    pass
             return self.send(code, json.dumps(body, ensure_ascii=False), MIME[".json"], {"Set-Cookie": cookie} if cookie else None)
+        if self.path == "/cgi-bin/push":   # тот же адрес, что на роутере (за паролем семьи)
+            if self.locked():
+                return
+            d = push_dir()
+            if d is None:
+                return self.send(200, json.dumps({"ok": False, "message": "Это демо: уведомлений здесь нет."}, ensure_ascii=False), MIME[".json"])
+            try:
+                payload = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 8192)).decode("utf-8"))
+            except Exception:
+                payload = None
+            code, body = push.handle(d, payload)
+            return self.send(code, json.dumps(body, ensure_ascii=False), MIME[".json"])
         if self.path in ("/cgi-bin/setup", "/cgi-bin/logout", "/cgi-bin/refresh") and self.locked():
             return
         if self.path == "/cgi-bin/setup":   # тот же адрес, что и на роутере

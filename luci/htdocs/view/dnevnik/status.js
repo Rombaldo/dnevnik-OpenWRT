@@ -19,7 +19,10 @@ var call = {
 	family_set: rpc.declare({ object: 'luci.dnevnik', method: 'family_set', params: [ 'password', 'hint' ] }),
 	family_off: rpc.declare({ object: 'luci.dnevnik', method: 'family_off' }),
 	remote_info: rpc.declare({ object: 'luci.dnevnik', method: 'remote_info' }),
-	doctor: rpc.declare({ object: 'luci.dnevnik', method: 'doctor' })
+	doctor: rpc.declare({ object: 'luci.dnevnik', method: 'doctor' }),
+	devices_list: rpc.declare({ object: 'luci.dnevnik', method: 'devices_list' }),
+	device_remove: rpc.declare({ object: 'luci.dnevnik', method: 'device_remove', params: [ 'id' ] }),
+	logins_clear: rpc.declare({ object: 'luci.dnevnik', method: 'logins_clear' })
 };
 
 var STYLE =
@@ -77,7 +80,7 @@ return view.extend({
 	handleReset: null,
 
 	load: function() {
-		return Promise.all([ call.status(), call.log('sync'), call.remote_info() ]);
+		return Promise.all([ call.status(), call.log('sync'), call.remote_info(), call.devices_list() ]);
 	},
 
 	inviteText: function(url) {
@@ -86,6 +89,87 @@ return view.extend({
 			'2. Введите пароль семьи (его сообщит тот, кто настраивал дневник).\n' +
 			'3. Чтобы дневник был как приложение. iPhone: Safari → «Поделиться» → «На экран Домой». Android: Chrome → ⋮ → «Установить приложение» или «Добавить на главный экран».\n\n' +
 			'Если страница не открылась, обновите её ещё раз: иногда нужно 2–3 попытки.';
+	},
+
+	ago: function(ts, now) {
+		var s = Math.max(0, (now || Math.floor(Date.now() / 1000)) - ts);
+		if (s < 90) return 'только что';
+		if (s < 3600) return Math.round(s / 60) + ' мин назад';
+		if (s < 86400) return Math.round(s / 3600) + ' ч назад';
+		return whenText(new Date(ts * 1000).toISOString());
+	},
+
+	paintDevices: function(d) {
+		var self = this, r = this.refs, now = d && d.now;
+		this.devs = d || {};
+		r.devbox.textContent = '';
+		if (!d || !d.ok) { r.devbox.appendChild(E('p', { 'class': 'dn-hint' }, 'Список недоступен. Обновите программу.')); return; }
+		var row = function(cls, head, sub, extra) {
+			var n = E('div', { 'class': 'dn-chk ' + cls }, [ E('b', {}, head), sub ? E('div', { 'class': 'dn-fix', style: 'margin-left:0' }, sub) : '' ]);
+			if (extra) n.appendChild(extra);
+			return n;
+		};
+		var where = { home: 'из дома', internet: 'из интернета', tailscale: 'через Tailscale', unknown: 'откуда — неизвестно' };
+		r.devpill.className = 'dn-pill ' + (d.failed24h ? 'warn' : 'ok');
+		r.devpill.textContent = d.failed24h ? 'Неверных попыток за сутки: ' + d.failed24h : 'Всё спокойно';
+		if (!d.family) r.devbox.appendChild(E('div', { 'class': 'dn-note warn' }, 'Пароль семьи не задан: входы не записываются, различить устройства нельзя.'));
+		r.devbox.appendChild(E('p', { 'class': 'dn-k' }, 'Подключены к уведомлениям'));
+		if (!(d.subs || []).length) r.devbox.appendChild(E('p', { 'class': 'dn-hint' }, 'Пока ни одного устройства (включается на телефоне: ⚙ → «Уведомления»).'));
+		(d.subs || []).forEach(function(s) {
+			var btn = E('button', { 'class': 'cbi-button cbi-button-negative', style: 'margin-top:6px', click: function() { return self.doRemoveDevice(s); } }, 'Отключить');
+			r.devbox.appendChild(row(s.fail ? 'warn' : 'ok', (s.name || s.label) + (s.name ? ' · ' + s.label : ''),
+				s.service + ', подключено ' + whenText(new Date((s.created || 0) * 1000).toISOString()) + (s.pending ? ', в очереди: ' + s.pending : '') + (s.fail ? ', сбоев подряд: ' + s.fail : ''), btn));
+		});
+		r.devbox.appendChild(E('p', { 'class': 'dn-k', style: 'margin-top:14px' }, 'Кто открывал дневник (с последней перезагрузки роутера)'));
+		if (!(d.seen || []).length) r.devbox.appendChild(E('p', { 'class': 'dn-hint' }, 'Пока никого.'));
+		(d.seen || []).forEach(function(s) {
+			r.devbox.appendChild(row('info', s.dev, where[s.where] + ', последний раз ' + self.ago(s.ts, now)));
+		});
+		r.devbox.appendChild(E('p', { 'class': 'dn-k', style: 'margin-top:14px' }, 'Журнал входов по паролю семьи'));
+		if (!(d.logins || []).length) r.devbox.appendChild(E('p', { 'class': 'dn-hint' }, 'Пока записей нет.'));
+		(d.logins || []).forEach(function(e) {
+			r.devbox.appendChild(row(e.ok ? 'ok' : 'fail', (e.ok ? '✓ Вошёл: ' : '✗ Неверный пароль' + (e.n > 1 ? ' (×' + e.n + ')' : '') + ': ') + e.dev,
+				where[e.where] + ', ' + self.ago(e.ts, now)));
+		});
+	},
+
+	doDevices: function() {
+		var self = this;
+		return call.devices_list().then(function(d) { self.paintDevices(d); });
+	},
+
+	doRemoveDevice: function(s) {
+		var self = this;
+		ui.showModal('Отключить устройство?', [
+			E('p', 'Устройство «' + (s.name || s.label) + '» перестанет получать уведомления. Включить их снова можно на самом телефоне (⚙ → «Уведомления»).'),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'cbi-button', click: ui.hideModal }, 'Отмена'), ' ',
+				E('button', { 'class': 'cbi-button cbi-button-negative', click: function() {
+					ui.hideModal();
+					return call.device_remove(s.id).then(function(res) {
+						self.say(self.refs.devnote, res.ok ? 'ok' : 'warn', res.message);
+						return self.doDevices();
+					});
+				} }, 'Отключить')
+			])
+		]);
+	},
+
+	doClearLogins: function() {
+		var self = this;
+		ui.showModal('Очистить журнал входов?', [
+			E('p', 'Журнал входов и список «кто открывал» будут стёрты. Подключённые уведомления это не затронет.'),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'cbi-button', click: ui.hideModal }, 'Отмена'), ' ',
+				E('button', { 'class': 'cbi-button cbi-button-negative', click: function() {
+					ui.hideModal();
+					return call.logins_clear().then(function(res) {
+						self.say(self.refs.devnote, res.ok ? 'ok' : 'bad', res.message);
+						return self.doDevices();
+					});
+				} }, 'Очистить')
+			])
+		]);
 	},
 
 	paintRemote: function(info) {
@@ -330,6 +414,9 @@ return view.extend({
 		r.fpw = E('input', { 'class': 'cbi-input-password', type: 'password', autocomplete: 'new-password', maxlength: 128 });
 		r.fpw2 = E('input', { 'class': 'cbi-input-password', type: 'password', autocomplete: 'new-password', maxlength: 128 });
 		r.fhint = E('input', { 'class': 'cbi-input-text', type: 'text', maxlength: 100, placeholder: 'например: имя собаки и год' });
+		r.devpill = E('span', { 'class': 'dn-pill' }, '…');
+		r.devbox = E('div', {});
+		r.devnote = E('div', { 'class': 'dn-note', style: 'display:none' });
 		r.rpill = E('span', { 'class': 'dn-pill' }, '…');
 		r.rurl = E('a', { href: '#', target: '_blank', rel: 'noopener' }, '—');
 		r.rstate = E('p', { 'class': 'dn-v' }, '');
@@ -385,6 +472,16 @@ return view.extend({
 				r.fnote
 			]),
 			E('div', { 'class': 'dn-card' }, [
+				E('div', { 'class': 'dn-head' }, [ E('p', { 'class': 'dn-title' }, 'Устройства и входы'), r.devpill ]),
+				r.devbox,
+				E('div', { 'class': 'dn-btns' }, [
+					E('button', { 'class': 'cbi-button', click: function() { return self.doDevices(); } }, 'Обновить список'),
+					E('button', { 'class': 'cbi-button cbi-button-negative', click: function() { return self.doClearLogins(); } }, 'Очистить журнал')
+				]),
+				r.devnote,
+				E('p', { 'class': 'dn-hint' }, 'Устройства различаются по типу и браузеру (имя можно задать при включении уведомлений). Адреса не записываются; из интернета роутер видит только «из интернета», а не чей именно адрес.')
+			]),
+			E('div', { 'class': 'dn-card' }, [
 				E('div', { 'class': 'dn-head' }, [ E('p', { 'class': 'dn-title' }, 'Доступ из интернета и проверка'), r.rpill ]),
 				E('div', { 'class': 'dn-grid' }, [ kv('Адрес для семьи', E('p', { 'class': 'dn-v' }, [ r.rurl ])), kv('Состояние', r.rstate) ]),
 				r.rhow,
@@ -411,6 +508,7 @@ return view.extend({
 
 		this.paint(st);
 		this.paintRemote(data[2]);
+		this.paintDevices(data[3]);
 		poll.add(function() { return self.poll(); }, 5);
 		return node;
 	}

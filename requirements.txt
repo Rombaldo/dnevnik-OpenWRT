@@ -1,2 +1,3 @@
 playwright==1.49.1
 qrcode==8.2
+cryptography>=42     # только для тестов: на роутере его ставит router/push.sh (пакет python3-cryptography)

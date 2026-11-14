@@ -29,6 +29,13 @@ try:
     o = core.sync(args.data, args.out, session_save_hours=args.save_session_hours,
                   config_path=APP / "config.json", version_path=APP / "VERSION")
     print(f"ok: {len(o['days'])} дней, {o['updatedAt']}")
+    try:                                   # что нового: оценки, домашка, отмены, пропуски; сбой уведомлений обновление не ломает
+        import notify
+        events = notify.process(args.data, o)
+        if events:
+            print(f"notify: событий {len(events)}")
+    except Exception as e:
+        print(f"notify: {type(e).__name__}: {e}")
 except core.NeedLogin as e:
     print(f"NEED_LOGIN: {e}")
     sys.exit(2)

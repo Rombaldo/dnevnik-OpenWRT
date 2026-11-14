@@ -8,16 +8,18 @@ import sys
 HOME_DIR = os.environ.get("DNEVNIK_HOME", "/root/dnevnik")      # другое значение нужно только тестам
 sys.path.insert(0, HOME_DIR)
 import auth  # noqa: E402
+import devices  # noqa: E402
 
 DATA = os.path.join(HOME_DIR, "data")
 THROTTLE = os.environ.get("DNEVNIK_AUTH_THROTTLE", "/tmp/dnevnik-auth-throttle")   # в оперативной памяти: после перезагрузки счётчик неудач обнуляется
+SEEN = os.environ.get("DNEVNIK_SEEN", devices.SEEN_DEFAULT)
 sys.stdout.reconfigure(encoding="utf-8")
 
 
 def reply(obj, code=200, cookie=None):
     head = auth.status_line(code) + "\r\nContent-Type: application/json; charset=utf-8\r\nCache-Control: no-store\r\n"
-    if cookie:
-        head += "Set-Cookie: %s\r\n" % cookie
+    for c in ([cookie] if isinstance(cookie, str) else (cookie or [])):
+        head += "Set-Cookie: %s\r\n" % c
     sys.stdout.write(head + "\r\n" + json.dumps(obj, ensure_ascii=False))
     sys.exit(0)
 
@@ -36,4 +38,17 @@ except Exception:
 secure = (os.environ.get("HTTP_X_FORWARDED_PROTO", "").lower() == "https" or os.environ.get("HTTPS", "").lower() == "on"
           or auth.is_secure_host(os.environ.get("HTTP_HOST")))
 code, body, cookie = auth.handle(DATA, payload, os.environ.get("HTTP_COOKIE"), THROTTLE, secure=secure)
-reply(body, code, cookie)
+cookies = [cookie] if cookie else []
+if payload.get("action") == "login" and code in (200, 401) and body.get("enabled") is not False:     # журнал входов (слишком частые попытки, код 429, не пишем)
+    try:
+        had = devices.dev_id_from_cookie(os.environ.get("HTTP_COOKIE"))
+        did = had or devices.new_dev_id()
+        ua, addr = os.environ.get("HTTP_USER_AGENT"), os.environ.get("REMOTE_ADDR")
+        devices.record_login(DATA, code == 200, ua, addr, did)
+        if code == 200:
+            devices.touch(SEEN, did, ua, addr)
+        if not had:
+            cookies.append(devices.dev_cookie_header(did, secure))
+    except Exception:                                      # журнал не должен мешать войти
+        pass
+reply(body, code, cookies)

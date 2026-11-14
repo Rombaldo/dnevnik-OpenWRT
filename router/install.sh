@@ -10,6 +10,7 @@
 #   без LuCI (по умолчанию):  wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh
 #   с LuCI:                   wget -qO- https://raw.githubusercontent.com/Rombaldo/dnevnik-OpenWRT/main/router/install.sh | sh -s -- --luci
 #   убрать страницу LuCI:     ... | sh -s -- --no-luci
+#   с уведомлениями:          ... | sh -s -- --push       (ставит модуль для отправки уведомлений, около 4 МБ; включаются на телефоне в ⚙)
 #   с выходом в интернет:     ... | sh -s -- --remote     (после установки запускает router/remote.sh: Tailscale и постоянный адрес
 #                                                          для семьи; нужен пароль семьи, без него в интернет не выставляет;
 #                                                          ключи можно сочетать: sh -s -- --luci --remote)
@@ -33,12 +34,14 @@ REF="${REF:-main}"
 
 LUCI=auto
 REMOTE=0
+PUSH=0
 for arg in "$@"; do
     case "$arg" in
         --luci) LUCI=1 ;;
         --no-luci) LUCI=0 ;;
         --remote) REMOTE=1 ;;
-        *) echo "ОШИБКА: неизвестный ключ $arg (бывают --luci, --no-luci и --remote)" >&2; exit 2 ;;
+        --push) PUSH=1 ;;
+        *) echo "ОШИБКА: неизвестный ключ $arg (бывают --luci, --no-luci, --remote и --push)" >&2; exit 2 ;;
     esac
 done
 
@@ -91,7 +94,7 @@ fi
 tar tzf "$TMP/src.tar.gz" >/dev/null 2>&1 || die "архив повреждён"
 mkdir -p "$TMP/x" && tar xzf "$TMP/src.tar.gz" -C "$TMP/x"
 SRC=$(find "$TMP/x" -mindepth 1 -maxdepth 1 -type d | head -n 1)
-for f in core.py auth.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/auth.cgi router/data.cgi router/password.py router/doctor.py router/remote.sh router/setname.sh; do
+for f in core.py auth.py devices.py notify.py push.py sync.py VERSION web/index.html router/dnevnik.init router/sync.sh router/refresh.cgi router/setup.cgi router/logout.cgi router/auth.cgi router/data.cgi router/push.cgi router/password.py router/doctor.py router/remote.sh router/push.sh router/setname.sh; do
     [ -f "$SRC/$f" ] || die "в архиве нет файла $f"
 done
 if [ "$LUCI" = "1" ]; then
@@ -107,7 +110,7 @@ mkdir -p "$APP/data"; chmod 700 "$APP/data"
 rm -rf "$APP/web" "$APP/router" "$APP/luci"
 cp -r "$SRC/web" "$SRC/router" "$APP/"
 [ -d "$SRC/luci" ] && cp -r "$SRC/luci" "$APP/"
-cp -f "$SRC/core.py" "$SRC/auth.py" "$SRC/sync.py" "$SRC/VERSION" "$APP/"
+cp -f "$SRC/core.py" "$SRC/auth.py" "$SRC/devices.py" "$SRC/notify.py" "$SRC/push.py" "$SRC/sync.py" "$SRC/VERSION" "$APP/"
 [ -f "$APP/config.json" ] || cp "$SRC/config.example.json" "$APP/config.json"
 chmod 755 "$APP"/router/*.sh "$APP"/router/*.cgi "$APP"/router/*.py "$APP"/router/dnevnik.init
 [ -f "$APP/luci/rpcd/luci.dnevnik" ] && chmod 755 "$APP/luci/rpcd/luci.dnevnik"
@@ -172,6 +175,14 @@ say "Проверяю, что всё работает…"
 python3 "$APP/router/doctor.py" --summary || true
 echo "    Полная проверка в любой момент: python3 $APP/router/doctor.py   (или кнопка в LuCI: Службы → Дневник)"
 
+# 6а. Уведомления (по желанию, ключ --push)
+PUSH_CODE=0
+if [ "$PUSH" = "1" ]; then
+    echo
+    say "Ставлю модуль уведомлений…"
+    sh "$APP/router/push.sh" install || PUSH_CODE=$?
+fi
+
 # 7. Выход в интернет (по желанию, ключ --remote)
 if [ "$REMOTE" = "1" ]; then
     echo
@@ -181,4 +192,5 @@ if [ "$REMOTE" = "1" ]; then
 else
     echo
     echo "    Чтобы дневник открывался не только дома: wget -qO- https://raw.githubusercontent.com/$REPO/$REF/router/install.sh | sh -s -- --remote"
+    [ "$PUSH" = "1" ] || echo "    Уведомления о новых оценках и домашке на телефон (по желанию): sh $APP/router/push.sh"
 fi
